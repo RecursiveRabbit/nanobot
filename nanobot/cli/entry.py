@@ -61,6 +61,10 @@ def _run_agent(args: list[str], *, prog_name: str) -> None:
     import typer
 
     from nanobot.cli.agent import agent
+    from nanobot.session import mint as _session_mint
+
+    # Per-boot minting identity; announcement lands in ~/.nanobot/mint/.
+    _session_mint.init()
 
     agent_app = typer.Typer(add_completion=False)
     agent_app.command()(agent)

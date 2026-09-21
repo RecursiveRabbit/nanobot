@@ -342,6 +342,57 @@ def trigger(
     console.print(f"[green]Queued[/green] {delivery.trigger_id} ({delivery.id})")
 
 
+@app.command()
+def commit(
+    checkfile: str = typer.Argument(..., help="Check file being signed (orient)"),
+    key: str = typer.Option(..., "--key", help="Witness key, already spoken aloud in this session"),
+    check: str | None = typer.Option(None, "--check", help="Check name (default: file stem, uppercased)"),
+    session: str | None = typer.Option(None, "--session", help="Session file to mint (default: most recently active)"),
+    outdir: str | None = typer.Option(None, "--outdir", help="Witness output dir (default: orient sessions/)"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+):
+    """Mint this session as a witness for an orient check.
+
+    The key must already be spoken aloud in this session's transcript — the
+    gateway stamps it into the signed envelope; the record is the unlock.
+    The gateway's per-boot identity signs; nothing else can.
+    """
+    import json as _json
+    import urllib.request
+
+    runtime_config = _load_runtime_config(config, workspace)
+    name = (check or Path(checkfile).stem).upper()
+    if session:
+        session_path = Path(session).expanduser().resolve()
+    else:
+        sessions_root = Path.home() / ".nanobot" / "sessions"
+        candidates = [p for p in sessions_root.rglob("*.jsonl")
+                      if not p.name.endswith(".checkpoint.json")]
+        if not candidates:
+            console.print("[red]Error: no session files found[/red]")
+            raise typer.Exit(1)
+        session_path = max(candidates, key=lambda p: p.stat().st_mtime)
+        console.print(f"[dim]minting most recently active session: {session_path.name}[/dim]")
+    body: dict = {"session_path": str(session_path), "keys": {name: key}}
+    if outdir:
+        body["outdir"] = outdir
+    url = f"http://127.0.0.1:{runtime_config.gateway.port}/v1/mint"
+    req = urllib.request.Request(
+        url, data=_json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = _json.loads(resp.read())
+    except Exception as exc:
+        console.print(
+            f"[red]Error: mint request failed ({exc}). Is the gateway running?[/red]")
+        raise typer.Exit(1) from exc
+    console.print(f"[green]Minted[/green] {result['envelope']}")
+    console.print(f"  transcript: {result['transcript']}")
+    console.print(f"  cert: {result['cert_id']}")
+
+
 # ============================================================================
 # OpenAI-Compatible API Server
 # ============================================================================

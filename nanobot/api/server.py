@@ -468,6 +468,60 @@ async def handle_health(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Session minting (orient witness pipeline)
+# ---------------------------------------------------------------------------
+
+
+async def handle_mint(request: web.Request) -> web.Response:
+    """Mint a session file as an orient witness artifact.
+
+    Body: {"session_path": <path under ~/.nanobot/sessions>,
+           "keys": {"CHECKNAME": "orient-key-CHECKNAME-<24hex>"},
+           "outdir": <optional, default $ORIENT_SESSIONS_DIR or
+                      ~/Coding_Projects/orient/sessions>}
+
+    The gateway's own boot identity signs the envelope; the subagent flag is
+    detected from the session's metadata, never taken from the caller.
+    """
+    from nanobot.session import mint
+
+    try:
+        body = await request.json()
+    except _json.JSONDecodeError:
+        return _error_json(400, "invalid JSON body")
+    session_path = body.get("session_path")
+    keys = body.get("keys")
+    if not isinstance(session_path, str) or not session_path:
+        return _error_json(400, "session_path is required")
+    if not isinstance(keys, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in keys.items()):
+        return _error_json(400, "keys must be an object of string:string")
+    outdir_raw = body.get("outdir")
+    if isinstance(outdir_raw, str) and outdir_raw:
+        from pathlib import Path as _Path
+        outdir = _Path(outdir_raw)
+    else:
+        import os
+        from pathlib import Path as _Path
+        outdir = _Path(os.environ.get(
+            "ORIENT_SESSIONS_DIR",
+            str(_Path.home() / "Coding_Projects" / "orient" / "sessions")))
+    mint.init()  # idempotent; a serving process is a minting process
+    try:
+        envelope_path, transcript_path = mint.mint_session(
+            _Path(session_path), keys, outdir)
+    except (FileNotFoundError, ValueError) as exc:
+        return _error_json(400, str(exc))
+    except RuntimeError as exc:
+        return _error_json(500, str(exc))
+    return web.json_response({
+        "envelope": str(envelope_path),
+        "transcript": str(transcript_path),
+        "cert_id": mint.identity().cert_id,
+    })
+
+
+# ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
 
@@ -515,6 +569,7 @@ def create_app(
     app.middlewares.append(auth_middleware)
 
     app.router.add_post("/v1/chat/completions", handle_chat_completions)
+    app.router.add_post("/v1/mint", handle_mint)
     app.router.add_get("/v1/models", handle_models)
     app.router.add_get("/health", handle_health)
     return app

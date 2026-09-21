@@ -285,6 +285,54 @@ def _gateway_readiness_payload(channels: Any) -> tuple[bool, dict[str, object]]:
     }
 
 
+def _handle_mint_request(payload: bytes) -> tuple[str, str]:
+    """Mint a session file as an orient witness artifact.
+
+    Signs with this gateway's own boot identity (held in memory, undumpable).
+    The subagent flag is detected from the session's metadata, never taken
+    from the caller. Loopback-only by deployment; mint_session refuses paths
+    outside ~/.nanobot/sessions.
+    """
+    import json as _json
+    import os
+    from pathlib import Path as _Path
+
+    from nanobot.session import mint
+
+    def _err(status: str, msg: str) -> tuple[str, str]:
+        return status, _json.dumps({"error": msg})
+
+    try:
+        body = _json.loads(payload.decode("utf-8", "replace") or "{}")
+    except _json.JSONDecodeError:
+        return _err("400 Bad Request", "invalid JSON body")
+    session_path = body.get("session_path")
+    keys = body.get("keys")
+    if not isinstance(session_path, str) or not session_path:
+        return _err("400 Bad Request", "session_path is required")
+    if not isinstance(keys, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in keys.items()):
+        return _err("400 Bad Request", "keys must be an object of string:string")
+    outdir_raw = body.get("outdir")
+    outdir = _Path(outdir_raw) if isinstance(outdir_raw, str) and outdir_raw else _Path(
+        os.environ.get(
+            "ORIENT_SESSIONS_DIR",
+            str(_Path.home() / "Coding_Projects" / "orient" / "sessions")))
+    mint.init()  # idempotent; initialized at gateway boot
+    try:
+        envelope_path, transcript_path = mint.mint_session(
+            _Path(session_path), keys, outdir)
+    except (FileNotFoundError, ValueError) as exc:
+        return _err("400 Bad Request", str(exc))
+    except RuntimeError as exc:
+        return _err("500 Internal Server Error", str(exc))
+    return "200 OK", _json.dumps({
+        "envelope": str(envelope_path),
+        "transcript": str(transcript_path),
+        "cert_id": mint.identity().cert_id,
+    })
+
+
 async def _close_gateway_runtime(
     agent: AgentLoop,
     mcp_provider: MCPProvider,
@@ -409,6 +457,12 @@ def _run_gateway(
     )
     sync_workspace_templates(config.workspace_path)
     bus = MessageBus()
+
+    # Session minting identity: per-boot keypair held in this process's
+    # memory (undumpable), announced to ~/.nanobot/mint/ for the
+    # transparency log. Only this gateway can mint witness sessions.
+    from nanobot.session import mint as _session_mint
+    _session_mint.init()
     fallback_model_observer = build_webui_fallback_model_observer(bus)
 
     def _observe_provider(snapshot: ProviderSnapshot) -> ProviderSnapshot:
@@ -775,7 +829,7 @@ def _run_gateway(
             async with connection_slots:
                 try:
                     data = await asyncio.wait_for(
-                        reader.read(4096),
+                        reader.read(65536),
                         timeout=_GATEWAY_HEALTH_READ_TIMEOUT_SECONDS,
                     )
                     request_line = data.split(b"\r\n", 1)[0].decode(
@@ -786,7 +840,12 @@ def _run_gateway(
                     if len(parts) >= 2:
                         method, path = parts[0], parts[1]
 
-                    if method == "GET" and path == "/health":
+                    if method == "POST" and path == "/v1/mint":
+                        body_raw = data.split(b"\r\n\r\n", 1)
+                        payload = body_raw[1] if len(body_raw) == 2 else b""
+                        status, body = _handle_mint_request(payload)
+                        content_type = "application/json"
+                    elif method == "GET" and path == "/health":
                         ready, payload = _gateway_readiness_payload(channels)
                         body = _json.dumps(payload)
                         status = "200 OK" if ready else "503 Service Unavailable"
