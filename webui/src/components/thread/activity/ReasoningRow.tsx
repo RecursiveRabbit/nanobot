@@ -21,16 +21,45 @@ export function ReasoningRow({
     ? t("message.reasoningStreaming", { defaultValue: "Thinking…" })
     : t("message.reasoning", { defaultValue: "Thinking" });
   const preview = compactReasoningPreview(text) || fallback;
+  const [expanded, setExpanded] = useState(false);
   return (
-    <ActivityStep
-      marker={<ReasoningMarker streaming={streaming} />}
-      active={streaming}
-      tone={streaming ? "active" : "success"}
-      label={preview}
-      labelClassName="italic text-muted-foreground/78"
-      contentClassName="overflow-hidden"
-      className={className}
-    />
+    <div className={className}>
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        data-testid="reasoning-row-toggle"
+        className="cursor-pointer rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+        onClick={() => setExpanded((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setExpanded((v) => !v);
+          }
+        }}
+      >
+        <ActivityStep
+          marker={<ReasoningMarker streaming={streaming} />}
+          active={streaming}
+          tone={streaming ? "active" : "success"}
+          label={preview}
+          labelClassName="italic text-muted-foreground/78"
+          contentClassName="overflow-hidden"
+        />
+      </div>
+      {expanded ? (
+        <div
+          data-testid="reasoning-row-expanded"
+          className={cn(
+            "ml-[1.625rem] mt-1 max-h-80 overflow-y-auto whitespace-pre-wrap break-words",
+            "rounded-md border border-border/60 bg-muted/30 p-2 font-mono text-xs leading-5",
+            "text-muted-foreground",
+          )}
+        >
+          {text || preview}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

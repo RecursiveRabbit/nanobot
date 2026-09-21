@@ -888,8 +888,17 @@ def build_status_content(
 
 
 def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]:
-    """Sync bundled templates to workspace. Creates missing files without overwriting user files."""
-    from importlib.resources import files as pkg_files
+    """Sync bundled templates to workspace. Creates missing files without overwriting user files.
+
+    LOCAL PATCH (Evans, 2026-09-17): disabled entirely. The workspace must not
+    respawn harness-shipped profile files (SOUL.md, USER.md, AGENTS.md,
+    HEARTBEAT.md, memory/MEMORY.md, prompts/README.md) after they have been
+    deliberately deleted. Nothing may inject behavioral rules from outside the
+    resident's own continuity files.
+    """
+    return []
+
+    from importlib.resources import files as pkg_files  # noqa: unreachable
 
     try:
         tpl = pkg_files("nanobot") / "templates"

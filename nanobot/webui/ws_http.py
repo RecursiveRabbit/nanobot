@@ -24,6 +24,7 @@ from websockets.datastructures import Headers
 from websockets.http11 import Request as WsRequest
 from websockets.http11 import Response
 
+from nanobot.bus.events import InboundMessage
 from nanobot.command.builtin import builtin_command_palette
 from nanobot.cron.session_turns import is_bound_cron_job
 from nanobot.cron.types import CronJob, CronSchedule
@@ -1161,8 +1162,38 @@ class GatewayHTTPHandler:
     async def _dispatch_misc_routes(
         self, connection: Any, request: WsRequest, got: str
     ) -> Response | None:
+        if got == "/api/webui/stop-session":
+            return await self._handle_stop_session(request)
         if got == "/api/sessions":
             return await self._handle_sessions_list(request)
+
+    async def _handle_stop_session(self, request: WsRequest) -> Response:
+        """Publish /stop for any channel session (localhost operator tooling).
+
+        Local addition (glassbox): mirrors the bootstrap auth model — bearer
+        token-issue secret — and routes through the standard command router,
+        so the cancellation and its confirmation behave exactly like a
+        channel-native /stop.
+        """
+        secret = self.config.token_issue_secret.strip() or self.config.token.strip()
+        if secret and not _issue_route_secret_matches(request.headers, secret):
+            return _http_error(401, "Unauthorized")
+        query = _parse_query(request.path)
+        channel = (_query_first(query, "channel") or "").strip()
+        chat_id = (_query_first(query, "chat_id") or "").strip()
+        if not channel or not chat_id or len(channel) > 64 or len(chat_id) > 128:
+            return _http_error(400, "channel and chat_id are required")
+        await self.bus.publish_inbound(
+            InboundMessage(
+                channel=channel,
+                sender_id="glassbox-operator",
+                chat_id=chat_id,
+                content="/stop",
+                metadata={"source": "glassbox"},
+            )
+        )
+        return _http_json_response({"ok": True, "channel": channel, "chat_id": chat_id})
+
         if got == "/api/commands":
             return self._handle_commands(request)
         if got == "/api/workspaces/pick-folder":

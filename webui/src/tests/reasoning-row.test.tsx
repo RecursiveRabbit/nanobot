@@ -15,8 +15,24 @@ it("shows the reasoning preview in the shared tooltip on hover and keyboard focu
   expect(await screen.findByRole("tooltip")).toHaveTextContent(text);
   await user.unhover(line);
   await user.tab();
+  expect(screen.getByTestId("reasoning-row-toggle")).toHaveFocus();
+  await user.tab();
   expect(line).toHaveFocus();
   expect(await screen.findByRole("tooltip")).toHaveTextContent(text);
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+});
+
+it("expands the full reasoning into a text box on click and collapses on second click", async () => {
+  const user = userEvent.setup();
+  const text = "First I considered the repo layout.\nThen I checked the config for drift.";
+  render(<ReasoningRow text={text} streaming={false} />);
+
+  expect(screen.queryByTestId("reasoning-row-expanded")).not.toBeInTheDocument();
+  await user.click(screen.getByTestId("reasoning-row-toggle"));
+  const box = screen.getByTestId("reasoning-row-expanded");
+  expect(box).toHaveTextContent("First I considered the repo layout.");
+  expect(box).toHaveTextContent("Then I checked the config for drift.");
+  await user.click(screen.getByTestId("reasoning-row-toggle"));
+  expect(screen.queryByTestId("reasoning-row-expanded")).not.toBeInTheDocument();
 });
