@@ -559,6 +559,7 @@ class TestAutoCompactEdgeCases:
 
     @pytest.mark.asyncio
     async def test_auto_compact_with_nothing_summary(self, tmp_path):
+        """The retired "(nothing)" sentinel raw-dumps instead of erasing."""
         loop = _make_loop(tmp_path, session_ttl_minutes=15)
         session = loop.sessions.get_or_create("cli:test")
         _add_turns(session, 6, prefix="thanks")
@@ -574,8 +575,10 @@ class TestAutoCompactEdgeCases:
         session_after = loop.sessions.get_or_create("cli:test")
         assert len(session_after.messages) == 13
         assert len(session_after.get_history(max_messages=12)) == 1
-        assert loop.auto_compact._summaries["cli:test"]["text"] == "(nothing)"
-        assert session_after.metadata["_last_summary"]["text"] == "(nothing)"
+        summary_text = loop.auto_compact._summaries["cli:test"]["text"]
+        assert summary_text != "(nothing)"
+        assert "thanks" in summary_text
+        assert session_after.metadata["_last_summary"]["text"] == summary_text
 
         await loop.aclose()
 
