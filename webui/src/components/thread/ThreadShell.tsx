@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { ScanText } from "lucide-react";
 
 import { FilePreviewAvailabilityProvider } from "@/components/FilePreviewAvailabilityContext";
 import { FilePreviewPanel } from "@/components/FilePreviewPanel";
@@ -16,7 +17,9 @@ import type {
 } from "@/components/thread/ComposerUsagePopover";
 import type { ModelPresetOption } from "@/components/thread/ModelPresetBadge";
 import { ThreadHeader } from "@/components/thread/ThreadHeader";
+import { ModelContextView } from "@/components/thread/ModelContextView";
 import { StreamErrorNotice } from "@/components/thread/StreamErrorNotice";
+import { Button } from "@/components/ui/button";
 import { ThreadViewport, type ThreadViewportHandle } from "@/components/thread/ThreadViewport";
 import { useNanobotStream, type SendAttachment, type SendOptions } from "@/hooks/useNanobotStream";
 import { useSessionHistory } from "@/hooks/useSessions";
@@ -52,6 +55,7 @@ import type {
 } from "@/lib/types";
 import { projectWebuiThreadMessages } from "@/lib/thread-display-compat";
 import { ThreadMessageCache } from "@/lib/thread-message-cache";
+import { cn } from "@/lib/utils";
 import { useClient } from "@/providers/ClientProvider";
 
 type MessageShape = Pick<UIMessage, "role" | "kind" | "content" | "isStreaming" | "turnId">;
@@ -789,6 +793,7 @@ export function ThreadShell({
   const pendingFirstRef = useRef<PendingFirstMessage | null>(null);
   const [pendingFirstTargetChatId, setPendingFirstTargetChatId] = useState<string | null>(null);
   const viewportRef = useRef<ThreadViewportHandle | null>(null);
+  const [modelViewOpen, setModelViewOpen] = useState(false);
   const activeViewportTurnByChatIdRef = useRef<Map<string, string>>(new Map());
   const knownTemporaryChatIdsRef = useRef(new Set<string>());
   const messageCacheRef = useRef(new ThreadMessageCache(
@@ -1338,6 +1343,10 @@ export function ThreadShell({
     setMessages(projectWebuiThreadMessages(historical));
   }, [chatId, historical, setMessages]);
 
+  useEffect(() => {
+    setModelViewOpen(false);
+  }, [chatId]);
+
   useLayoutEffect(() => {
     if (chatId) {
       const prev = prevChatIdForCacheRef.current;
@@ -1676,6 +1685,26 @@ export function ThreadShell({
   const sessionInfoAction = historyKey ? (
     <SessionInfoPopover sessionKey={historyKey} token={token} title={title} />
   ) : undefined;
+  const modelViewAction = historyKey ? (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      aria-label={t("modelView.toggle")}
+      aria-pressed={modelViewOpen}
+      title={t("modelView.toggle")}
+      data-testid="model-view-toggle"
+      onClick={() => setModelViewOpen((open) => !open)}
+      className={cn(
+        "host-no-drag h-8 w-8 shrink-0 rounded-full bg-transparent shadow-none transition-none",
+        modelViewOpen
+          ? "text-foreground hover:bg-transparent"
+          : "text-muted-foreground hover:bg-accent/45 hover:text-foreground",
+      )}
+    >
+      <ScanText className="h-4 w-4" aria-hidden />
+    </Button>
+  ) : undefined;
   const promptNavigatorAction = historyKey ? (
     <PromptNavigator
       messages={displayMessages}
@@ -1697,6 +1726,7 @@ export function ThreadShell({
       minimal={!session && !loading}
       promptNavigatorAction={promptNavigatorAction}
       sessionInfoAction={sessionInfoAction}
+      modelViewAction={modelViewAction}
       temporaryChatEnabled={temporaryChatEnabled}
       temporaryChatDisabled={booting || turnActive}
       onTemporaryChatEnabledChange={
@@ -1726,32 +1756,41 @@ export function ThreadShell({
         <FilePreviewAvailabilityProvider
           resolve={historyKey ? resolveFilePreviewAvailability : undefined}
         >
-          <ThreadViewport
-            ref={viewportRef}
-            messages={displayMessages}
-            temporary={temporary}
-            isStreaming={turnActive}
-            runStartedAt={currentRunStartedAt}
-            retryStatus={retryStatus}
-            emptyState={emptyState}
-            composer={composerPortalTarget === undefined ? composer : null}
-            activeTurnId={viewportTurnId}
-            activeTurnStartedHere={activeTurnStartedHere}
-            conversationKey={historyKey}
-            conversationReady={messagesReady}
-            showScrollToBottomButton={!!session}
-            cliApps={cliApps}
-            mcpPresets={mcpPresets}
-            slashCommands={availableSlashCommands}
-            forkBoundaryMessageCount={forkBoundaryMessageCount}
-            hasMoreBefore={hasMoreBefore}
-            loadingOlder={loadingOlder}
-            userMessageOffset={userMessageOffset}
-            onLoadOlder={loadOlder}
-            onOpenFilePreview={historyKey ? handleOpenFilePreview : undefined}
-            onForkFromMessage={onForkChat ? handleForkFromMessage : undefined}
-            onQuoteSelection={session ? handleQuoteSelection : undefined}
-          />
+          {modelViewOpen && historyKey ? (
+            <>
+              <ModelContextView sessionKey={historyKey} token={token} />
+              {composerPortalTarget === undefined ? (
+                <div className="shrink-0">{composer}</div>
+              ) : null}
+            </>
+          ) : (
+            <ThreadViewport
+              ref={viewportRef}
+              messages={displayMessages}
+              temporary={temporary}
+              isStreaming={turnActive}
+              runStartedAt={currentRunStartedAt}
+              retryStatus={retryStatus}
+              emptyState={emptyState}
+              composer={composerPortalTarget === undefined ? composer : null}
+              activeTurnId={viewportTurnId}
+              activeTurnStartedHere={activeTurnStartedHere}
+              conversationKey={historyKey}
+              conversationReady={messagesReady}
+              showScrollToBottomButton={!!session}
+              cliApps={cliApps}
+              mcpPresets={mcpPresets}
+              slashCommands={availableSlashCommands}
+              forkBoundaryMessageCount={forkBoundaryMessageCount}
+              hasMoreBefore={hasMoreBefore}
+              loadingOlder={loadingOlder}
+              userMessageOffset={userMessageOffset}
+              onLoadOlder={loadOlder}
+              onOpenFilePreview={historyKey ? handleOpenFilePreview : undefined}
+              onForkFromMessage={onForkChat ? handleForkFromMessage : undefined}
+              onQuoteSelection={session ? handleQuoteSelection : undefined}
+            />
+          )}
         </FilePreviewAvailabilityProvider>
       </div>
       {headerPortalTarget && headerActive

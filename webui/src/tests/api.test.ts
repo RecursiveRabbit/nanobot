@@ -22,6 +22,7 @@ import {
   fetchNanobotFeatures,
   fetchProviderModels,
   fetchSessionAutomations,
+  fetchSessionContext,
   fetchSettingsUsage,
   fetchSidebarState,
   fetchSkillDetail,
@@ -134,6 +135,17 @@ describe("webui API helpers", () => {
 
     await expect(request).rejects.toMatchObject({ name: "AbortError" });
     expect(requestSignal?.aborted).toBe(true);
+  });
+
+  it("percent-encodes websocket keys when fetching full session context", async () => {
+    await fetchSessionContext("tok", "websocket:chat-1", { full: true });
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/sessions/websocket%3Achat-1/context?full=1",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer tok" },
+      }),
+    );
   });
 
   it("percent-encodes websocket keys and paths when fetching file previews", async () => {

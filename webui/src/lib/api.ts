@@ -254,6 +254,42 @@ export async function fetchWebuiThread(
   return (await res.json()) as WebuiThreadPersistedPayload;
 }
 
+/** Model-side session projection: working-notes checkpoint + replayed tail. */
+export interface SessionContextReplayMessage {
+  role: string | null;
+  content: string;
+  checkpoint: boolean;
+}
+
+export interface SessionContextPayload {
+  schema_version: number;
+  session_key: string;
+  total_messages: number;
+  archived_messages: number;
+  replay_messages: number;
+  estimated_replay_tokens: number;
+  estimated_summary_tokens: number;
+  estimated_session_tokens: number;
+  archived_summary: string | null;
+  archived_summary_at: string | null;
+  replay?: SessionContextReplayMessage[];
+}
+
+export async function fetchSessionContext(
+  token: string,
+  key: string,
+  options?: { full?: boolean },
+  base: string = "",
+): Promise<SessionContextPayload> {
+  const query = options?.full ? "?full=1" : "";
+  return request<SessionContextPayload>(
+    `${base}/api/sessions/${encodeURIComponent(key)}/context${query}`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
 export async function fetchFilePreview(
   token: string,
   key: string,

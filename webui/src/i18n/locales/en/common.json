@@ -51,6 +51,21 @@
       "noMatch": "No pending request matches this code."
     }
   },
+  "modelView": {
+    "toggle": "Model context",
+    "notes": "Working notes (checkpoint)",
+    "noNotes": "No checkpoint yet — the model sees only the raw tail below.",
+    "boundary": "Coverage boundary — everything above lives in the notes",
+    "replay": "Uncovered tail sent with your next prompt",
+    "stats": "{{archived}} archived · {{replay}} replayed · ~{{tokens}} tokens",
+    "refresh": "Refresh",
+    "loading": "Loading model context…",
+    "error": "Could not load model context",
+    "roleUser": "you",
+    "roleAssistant": "agent",
+    "roleTool": "tool",
+    "roleSystem": "system"
+  },
   "temporaryChat": {
     "title": "Temporary chat",
     "retention": "Not saved to history or memory.",

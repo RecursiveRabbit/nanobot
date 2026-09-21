@@ -51,6 +51,21 @@
       "noMatch": "이 코드와 일치하는 대기 중인 요청이 없습니다."
     }
   },
+  "modelView": {
+    "toggle": "Model context",
+    "notes": "Working notes (checkpoint)",
+    "noNotes": "No checkpoint yet — the model sees only the raw tail below.",
+    "boundary": "Coverage boundary — everything above lives in the notes",
+    "replay": "Uncovered tail sent with your next prompt",
+    "stats": "{{archived}} archived · {{replay}} replayed · ~{{tokens}} tokens",
+    "refresh": "Refresh",
+    "loading": "Loading model context…",
+    "error": "Could not load model context",
+    "roleUser": "you",
+    "roleAssistant": "agent",
+    "roleTool": "tool",
+    "roleSystem": "system"
+  },
   "temporaryChat": {
     "title": "임시 채팅",
     "retention": "기록이나 메모리에 저장되지 않습니다.",

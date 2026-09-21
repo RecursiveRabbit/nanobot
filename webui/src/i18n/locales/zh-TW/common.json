@@ -51,6 +51,21 @@
       "noMatch": "沒有待處理請求符合此配對碼。"
     }
   },
+  "modelView": {
+    "toggle": "Model context",
+    "notes": "Working notes (checkpoint)",
+    "noNotes": "No checkpoint yet — the model sees only the raw tail below.",
+    "boundary": "Coverage boundary — everything above lives in the notes",
+    "replay": "Uncovered tail sent with your next prompt",
+    "stats": "{{archived}} archived · {{replay}} replayed · ~{{tokens}} tokens",
+    "refresh": "Refresh",
+    "loading": "Loading model context…",
+    "error": "Could not load model context",
+    "roleUser": "you",
+    "roleAssistant": "agent",
+    "roleTool": "tool",
+    "roleSystem": "system"
+  },
   "temporaryChat": {
     "title": "臨時聊天",
     "retention": "不會儲存至歷史記錄或記憶。",
