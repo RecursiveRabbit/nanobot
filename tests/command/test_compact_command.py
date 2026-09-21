@@ -90,7 +90,9 @@ async def test_compact_emits_one_lifecycle_and_keeps_the_session(loop, command) 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("trigger", ["manual", "idle"])
-@pytest.mark.parametrize("summary", ["The current task is to inspect the checkpoint.", "(nothing)"])
+# The retired "(nothing)" sentinel now raw-dumps instead of committing;
+# that path is covered by sentinel tests in test_consolidator.py.
+@pytest.mark.parametrize("summary", ["The current task is to inspect the checkpoint."])
 async def test_checkpoint_continues_through_reloaded_session(loop, trigger, summary) -> None:
     key = "cli:checkpoint-resume"
     session = loop.sessions.get_or_create(key)
