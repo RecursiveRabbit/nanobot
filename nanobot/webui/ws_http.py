@@ -764,7 +764,9 @@ class GatewayHTTPHandler:
         )
         if session is None:
             return _http_error(404, "session not found")
-        return _http_json_response(session_context_payload(session))
+        query = _parse_query(request.path)
+        full = (_query_first(query, "full") or "").strip() in {"1", "true", "yes"}
+        return _http_json_response(session_context_payload(session, full=full))
 
     async def _handle_sessions_list(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):

@@ -85,3 +85,49 @@ def test_session_context_sanitizes_usage_metadata() -> None:
         "ttft_ms": 75,
         "timed_requests": 1,
     }
+
+
+def test_session_context_full_mode_returns_complete_model_view() -> None:
+    long_summary = "working notes " * 1000  # Exceeds the preview cap.
+    messages = [
+        {"role": "user", "content": "archived question"},
+        {"role": "assistant", "content": "archived answer"},
+        {"role": "user", "content": "recent question"},
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "recent "}, {"type": "text", "text": "answer"}],
+        },
+    ]
+    session = Session(
+        key="websocket:context",
+        messages=messages,
+        metadata={
+            "_last_summary": {
+                "text": long_summary,
+                "last_active": "2026-09-20T05:00:00",
+            }
+        },
+    )
+    session.last_archived = 2
+
+    payload = session_context_payload(session, full=True)
+
+    assert payload["archived_summary"] == long_summary.strip()
+    assert payload["archived_summary_at"] == "2026-09-20T05:00:00"
+    assert payload["replay"] == [
+        {"role": "user", "content": "recent question", "checkpoint": False},
+        {"role": "assistant", "content": "recent \nanswer", "checkpoint": False},
+    ]
+
+
+def test_session_context_full_mode_marks_checkpoint_boundary() -> None:
+    session = Session(
+        key="websocket:context",
+        messages=[{"role": "user", "content": "old question"}],
+    )
+    session.commit_summary_checkpoint("settled notes", last_active=None)
+
+    payload = session_context_payload(session, full=True)
+
+    assert payload["replay"][0]["checkpoint"] is True
+    assert payload["archived_summary"] == "settled notes"
