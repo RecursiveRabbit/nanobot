@@ -128,7 +128,7 @@ async def _archive(
 
 
 class TestTurnTranscriptSummary:
-    @pytest.mark.parametrize("summary", ["replacement checkpoint", "(nothing)"])
+    @pytest.mark.parametrize("summary", ["replacement checkpoint"])
     async def test_uses_exact_accepted_prefix_and_existing_archiver(
         self,
         consolidator,
@@ -157,7 +157,7 @@ class TestTurnTranscriptSummary:
         call = mock_provider.chat_stream_with_retry.await_args.kwargs
         assert call["messages"][:-1] == accepted
         assert call["messages"][-1]["role"] == "user"
-        assert "SNIP" in call["messages"][-1]["content"]
+        assert "no token target" in call["messages"][-1]["content"]
         assert call["tools"] == tools
 
     async def test_native_compaction_appends_only_archive_prompt(
@@ -345,21 +345,20 @@ class TestConsolidatorSummarize:
 
 
 class TestConsolidatorPromptContract:
-    def test_archive_prompt_requests_a_cumulative_replacement_checkpoint(self):
+    def test_archive_prompt_requests_resident_working_notes(self):
         prompt = _ARCHIVE_PROMPT
 
-        for section in ("## Merge rules", "## What to retain", "## Output"):
-            assert section in prompt
-        assert "replacement checkpoint" in prompt
         assert "[Archived Context Summary]" in prompt
-        assert "current conversation state" in prompt
-        assert "SNIP" in prompt
+        assert "working notes" in prompt
+        assert "no token target" in prompt
+        assert "not an archive" in prompt
+        # The retired contract produced register-collapsed fact lines and
+        # sanctioned total amnesia.  None of it may come back.
+        assert "SNIP" not in prompt
         for mark in ("[permanent]", "[durable]", "[ephemeral]", "[correction]"):
-            assert mark in prompt
-        assert "working-state handoff" in prompt
-        assert "- [mark] fact" in prompt
-        assert "[skip]" not in prompt
-        assert "(nothing)" in prompt
+            assert mark not in prompt
+        assert "- [mark] fact" not in prompt
+        assert "(nothing)" not in prompt
         assert "history.jsonl" not in prompt
 
 
@@ -830,12 +829,13 @@ class TestCompactIdleSession:
         assert reloaded.metadata["_last_summary"]["text"] == fallback
 
     @pytest.mark.asyncio
-    async def test_nothing_replaces_previous_checkpoint(
+    async def test_nothing_sentinel_falls_back_to_raw_checkpoint(
         self,
         real_consolidator,
         mock_provider,
         runtime,
     ):
+        """A retired "(nothing)" response must never replace a checkpoint."""
         mock_provider.chat_stream_with_retry.side_effect = [
             LLMResponse(content="Existing checkpoint.", finish_reason="stop"),
             LLMResponse(content="(nothing)", finish_reason="stop"),
@@ -859,11 +859,15 @@ class TestCompactIdleSession:
             runtime=runtime,
         )
 
-        assert result == "(nothing)"
+        assert result is not None
+        assert result != "(nothing)"
         sessions.invalidate("cli:nothing-after-summary")
         reloaded = sessions.get_or_create("cli:nothing-after-summary")
         assert reloaded.last_archived == 5
+        # The raw fallback preserves the surrendered turns; the sentinel does
+        # not reach the checkpoint.
         assert reloaded.metadata["_last_summary"]["text"] == result
+        assert "thanks" in reloaded.metadata["_last_summary"]["text"]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("max_suffix", [8, 0])
@@ -1006,10 +1010,10 @@ class TestCompactIdleSession:
         assert reloaded.metadata == {}
 
     @pytest.mark.asyncio
-    async def test_nothing_commits_checkpoint_once_without_raw_archive(
+    async def test_nothing_sentinel_yields_raw_checkpoint_not_amnesia(
         self, real_consolidator, mock_provider, runtime
     ):
-        """A model's decision to retain nothing is a successful replacement."""
+        """The retired "(nothing)" sentinel falls back to a raw checkpoint."""
         mock_provider.chat_stream_with_retry.return_value = MagicMock(
             content="(nothing)", finish_reason="stop"
         )
@@ -1026,12 +1030,14 @@ class TestCompactIdleSession:
         second = await real_consolidator.compact_idle_session(
             "cli:nothing", runtime=runtime, max_suffix=4
         )
-        assert result == "(nothing)"
+        assert result is not None
+        assert result != "(nothing)"
+        assert "[RAW]" in result
+        assert "u1" in result
         assert second == ""
 
         reloaded = sessions.get_or_create("cli:nothing")
         assert reloaded.metadata["_last_summary"]["text"] == result
-        assert real_consolidator.store.read_unprocessed_history(0) == []
         assert reloaded.last_archived == 20
         assert [m["content"] for m in reloaded.get_history()] == [SUMMARY_CONTINUATION_TEXT]
         mock_provider.chat_stream_with_retry.assert_awaited_once()

@@ -924,6 +924,12 @@ class MemoryArchiver:
         if not summary or not summary.strip():
             logger.warning("Memory archive provider returned no summary, raw-dumping to history")
             return raw_fallback()
+        if summary.strip() == "(nothing)":
+            # The retired archive contract offered "(nothing)" as a sanctioned
+            # response — total amnesia on demand.  The resident-notes pass does
+            # not; treat the sentinel as a failed pass and keep the raw context.
+            logger.warning("Memory archive provider returned retired (nothing) sentinel, raw-dumping")
+            return raw_fallback()
         summary = self.store._normalize_history_entry(summary)
         if not summary:
             logger.warning("Memory archive provider summary was not safe to replay, raw-dumping")
