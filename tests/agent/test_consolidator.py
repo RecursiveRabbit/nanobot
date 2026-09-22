@@ -349,7 +349,7 @@ class TestConsolidatorPromptContract:
         prompt = _ARCHIVE_PROMPT
 
         assert "[Archived Context Summary]" in prompt
-        assert "working notes" in prompt
+        assert "your notes" in prompt
         assert "no token target" in prompt
         assert "not an archive" in prompt
         # The retired contract produced register-collapsed fact lines and
