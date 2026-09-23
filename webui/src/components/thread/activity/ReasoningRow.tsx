@@ -51,7 +51,7 @@ export function ReasoningRow({
         <div
           data-testid="reasoning-row-expanded"
           className={cn(
-            "ml-[1.625rem] mt-1 max-h-80 overflow-y-auto whitespace-pre-wrap break-words",
+            "ml-[1.625rem] mt-1 whitespace-pre-wrap break-words",
             "rounded-md border border-border/60 bg-muted/30 p-2 font-mono text-xs leading-5",
             "text-muted-foreground",
           )}
