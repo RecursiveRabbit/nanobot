@@ -15,6 +15,14 @@ from nanobot.cron.session_turns import CRON_DEFER_UNTIL_IDLE_META, CRON_TRIGGER_
 from nanobot.cron.types import CronJob
 from nanobot.cron.webui_metadata import cron_proactive_delivery_metadata
 from nanobot.utils.prompt_templates import render_template
+from nanobot.utils.strings import register_literal, text as string_text
+
+_CRON_PERSIST_CONTENT = register_literal(
+    "literal:cron_persist_content",
+    "Scheduled cron job triggered: {job_name}\n\n{job_message}",
+    group="Scheduled work",
+    advanced=True,
+)
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.registry import ToolRegistry
@@ -90,9 +98,9 @@ async def run_bound_cron_job(
         "job_name": job.name,
         "run_id": run_id,
         "prompt_ref": prompt_ref,
-        "persist_content": (
-            f"Scheduled cron job triggered: {job.name}\n\n{job.payload.message}"
-        ),
+        "persist_content": string_text(
+            "literal:cron_persist_content", _CRON_PERSIST_CONTENT
+        ).format(job_name=job.name, job_message=job.payload.message),
     }
     metadata[CRON_DEFER_UNTIL_IDLE_META] = True
     run_record_base: dict[str, Any] = {

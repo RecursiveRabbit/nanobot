@@ -13,6 +13,14 @@ from nanobot.agent.hook import (
 )
 from nanobot.bus.outbound_events import FileEditEvent
 from nanobot.events import EventSink
+from nanobot.utils.strings import register_literal, text as string_text
+
+_FILE_EDIT_INTERRUPTED = register_literal(
+    "literal:file_edit_interrupted",
+    "Task interrupted before this tool finished.",
+    group="Turns",
+    advanced=True,
+)
 from nanobot.providers.base import ToolCallRequest
 from nanobot.utils.file_edit_events import (
     FileEditTracker,
@@ -107,7 +115,7 @@ class FileEditActivityHook(AgentHook):
         await self._emit([
             build_file_edit_error_event(
                 tracker,
-                "Task interrupted before this tool finished.",
+                string_text("literal:file_edit_interrupted", _FILE_EDIT_INTERRUPTED),
             )
             for tracker in trackers
         ])

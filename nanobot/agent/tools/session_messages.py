@@ -4,6 +4,21 @@
 
 from __future__ import annotations
 
+from nanobot.utils.strings import register_literal, text as string_text
+
+_SESSION_MESSAGE_ENVELOPE = register_literal(
+    "literal:session_message_envelope",
+    "Message from @{source_name}.",
+    group="Turns",
+    advanced=True,
+)
+_SESSION_MESSAGE_REPLY_HINT = register_literal(
+    "literal:session_message_reply_hint",
+    " Reply with send_session_message.",
+    group="Turns",
+    advanced=True,
+)
+
 import asyncio
 import json
 import time
@@ -170,9 +185,13 @@ class SendSessionMessageTool(Tool):
             envelope["source_session_key"],
             envelope["source_handle"],
         )
-        content = f"Message from @{source.name}."
+        content = string_text(
+            "literal:session_message_envelope", _SESSION_MESSAGE_ENVELOPE
+        ).format(source_name=source.name)
         if envelope["expect_reply"]:
-            content += " Reply with send_session_message."
+            content += string_text(
+                "literal:session_message_reply_hint", _SESSION_MESSAGE_REPLY_HINT
+            )
         return RuntimeContextBlock(source="session_message", content=content)
 
     async def execute(

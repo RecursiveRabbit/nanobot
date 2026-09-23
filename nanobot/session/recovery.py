@@ -7,6 +7,27 @@ has to guess whether an interrupted tool call is safe to replay.
 
 from __future__ import annotations
 
+from nanobot.utils.strings import register_literal, text as string_text
+
+_RECOVERY_TURN_INTERRUPTED = register_literal(
+    "literal:recovery_turn_interrupted",
+    "Error: Task interrupted before a response was generated.",
+    group="Turns",
+    advanced=True,
+)
+_RECOVERY_TOOL_INTERRUPTED = register_literal(
+    "literal:recovery_tool_interrupted",
+    "Error: Task interrupted before this tool finished.",
+    group="Turns",
+    advanced=True,
+)
+_RECOVERY_SUPERSEDED = register_literal(
+    "literal:recovery_superseded",
+    "Task recovery was superseded by a newer message.",
+    group="Turns",
+    advanced=True,
+)
+
 import asyncio
 import dataclasses
 import json
@@ -327,7 +348,9 @@ def restore_runtime_checkpoint(session: Session) -> bool:
                 "role": "tool",
                 "tool_call_id": tool_call_id,
                 "name": name if isinstance(name, str) and name else "tool",
-                "content": "Error: Task interrupted before this tool finished.",
+                "content": string_text(
+                    "literal:recovery_tool_interrupted", _RECOVERY_TOOL_INTERRUPTED
+                ),
                 "timestamp": datetime.now().isoformat(),
                 "_recovery_interrupted": True,
             }
@@ -387,9 +410,9 @@ def restore_pending_interruption(session: Session, *, superseded: bool = False) 
         return False
     if session.messages and session.messages[-1].get("role") == "user":
         content = (
-            "Task recovery was superseded by a newer message."
+            string_text("literal:recovery_superseded", _RECOVERY_SUPERSEDED)
             if superseded
-            else "Error: Task interrupted before a response was generated."
+            else string_text("literal:recovery_turn_interrupted", _RECOVERY_TURN_INTERRUPTED)
         )
         session.messages.append(
             {
