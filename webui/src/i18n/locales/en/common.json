@@ -51,6 +51,24 @@
       "noMatch": "No pending request matches this code."
     }
   },
+  "assembledView": {
+    "stats": "{{model}} · {{messages}} messages · {{tools}} tools",
+    "refresh": "Refresh",
+    "loading": "Assembling context…",
+    "error": "Could not assemble context",
+    "resumableNote": "The provider holds server-side state for this session; the next call may send only the delta plus that reference.",
+    "systemPrompt": "System prompt",
+    "tools": "Tool definitions ({{count}})",
+    "mcp": "MCP status",
+    "messages": "Messages sent with your next prompt",
+    "boundary": "Coverage boundary — everything above lives in the working notes",
+    "roleUser": "you",
+    "roleAssistant": "agent",
+    "roleTool": "tool",
+    "roleSystem": "system",
+    "viewTranscript": "View full transcript",
+    "viewContext": "View model context"
+  },
   "stringsPage": {
     "title": "Context strings",
     "intro": "Every string the system can inject into the model's context. Edit to override the bundled default; changes apply live. Reset returns to the default.",

@@ -290,6 +290,38 @@ export async function fetchSessionContext(
   );
 }
 
+/** Byte-exact assembled context: the real outbound message array + tools. */
+export interface AssembledContextMessage {
+  role: string | null;
+  content?: unknown;
+  [key: string]: unknown;
+}
+
+export interface AssembledContextPayload {
+  schema_version: number;
+  session_key: string;
+  model: string;
+  provider: string | null;
+  provider_state_resumable: boolean;
+  messages: AssembledContextMessage[];
+  message_flags: Array<{ checkpoint: boolean }>;
+  tools: Array<{ function?: { name?: string; description?: string } }>;
+  mcp_status?: Record<string, string> | null;
+}
+
+export async function fetchAssembledContext(
+  token: string,
+  key: string,
+  base: string = "",
+): Promise<AssembledContextPayload> {
+  return request<AssembledContextPayload>(
+    `${base}/api/sessions/${encodeURIComponent(key)}/assembled-context`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
 /** Operator-owned injectable strings catalog (context injection surface). */
 export interface StringCatalogEntry {
   key: string;

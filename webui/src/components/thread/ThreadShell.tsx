@@ -17,7 +17,7 @@ import type {
 } from "@/components/thread/ComposerUsagePopover";
 import type { ModelPresetOption } from "@/components/thread/ModelPresetBadge";
 import { ThreadHeader } from "@/components/thread/ThreadHeader";
-import { ModelContextView } from "@/components/thread/ModelContextView";
+import { AssembledContextView } from "@/components/thread/AssembledContextView";
 import { StreamErrorNotice } from "@/components/thread/StreamErrorNotice";
 import { Button } from "@/components/ui/button";
 import { ThreadViewport, type ThreadViewportHandle } from "@/components/thread/ThreadViewport";
@@ -793,7 +793,8 @@ export function ThreadShell({
   const pendingFirstRef = useRef<PendingFirstMessage | null>(null);
   const [pendingFirstTargetChatId, setPendingFirstTargetChatId] = useState<string | null>(null);
   const viewportRef = useRef<ThreadViewportHandle | null>(null);
-  const [modelViewOpen, setModelViewOpen] = useState(false);
+  // The window defaults to the model's view; the toggle reveals the raw log.
+  const [modelViewOpen, setModelViewOpen] = useState(true);
   const activeViewportTurnByChatIdRef = useRef<Map<string, string>>(new Map());
   const knownTemporaryChatIdsRef = useRef(new Set<string>());
   const messageCacheRef = useRef(new ThreadMessageCache(
@@ -1690,9 +1691,9 @@ export function ThreadShell({
       type="button"
       variant="ghost"
       size="icon"
-      aria-label={t("modelView.toggle")}
+      aria-label={modelViewOpen ? t("assembledView.viewTranscript") : t("assembledView.viewContext")}
       aria-pressed={modelViewOpen}
-      title={t("modelView.toggle")}
+      title={modelViewOpen ? t("assembledView.viewTranscript") : t("assembledView.viewContext")}
       data-testid="model-view-toggle"
       onClick={() => setModelViewOpen((open) => !open)}
       className={cn(
@@ -1758,7 +1759,7 @@ export function ThreadShell({
         >
           {modelViewOpen && historyKey ? (
             <>
-              <ModelContextView sessionKey={historyKey} token={token} />
+              <AssembledContextView sessionKey={historyKey} token={token} refreshKey={turnActive} />
               {composerPortalTarget === undefined ? (
                 <div className="shrink-0">{composer}</div>
               ) : null}
