@@ -98,6 +98,8 @@ from nanobot.session.recovery import (
 from nanobot.session.summary import (
     SessionSummary,
     SessionSummaryCheckpoint,
+    session_summary_from_metadata,
+    summary_continuation_text,
 )
 from nanobot.triggers.local_turns import LocalTriggerTurnCoordinator
 from nanobot.utils.cancellation import task_is_cancelling
@@ -2314,6 +2316,84 @@ class AgentLoop:
     def _clear_runtime_checkpoint(self, session: Session) -> None:
         if self._RUNTIME_CHECKPOINT_KEY in session.metadata:
             session.metadata.pop(self._RUNTIME_CHECKPOINT_KEY, None)
+
+    def assembled_context_view(self, session_key: str) -> dict[str, Any] | None:
+        """Read-only: the exact message array and tool payload a fresh turn sends.
+
+        Runs the real assembly — ContextBuilder transcript plus governor
+        preparation — so the operator's window shows byte-for-byte what the
+        provider call carries. A fresh turn adds only the operator's typed
+        message (with its runtime-context block) on top of this view.
+        """
+        from nanobot.agent.context_governance import ContextGovernanceConfig
+
+        session = self.sessions.read_session_snapshot(session_key)
+        if session is None:
+            return None
+        runtime = self.runtime_for_session(session)
+        channel = session.key.split(":", 1)[0] if ":" in session.key else None
+        scope = self.workspace_scopes.for_turn(
+            channel=channel,
+            message_metadata=None,
+            session_metadata=session.metadata,
+        )
+        summary = session_summary_from_metadata(
+            session.metadata,
+            fallback_last_active=session.updated_at,
+        )
+        history = session.get_history(extend_to_user=False)
+        transcript = self.context.build_transcript(
+            TranscriptInput(
+                history=history,
+                current_message=None,
+                session_summary=summary,
+            ),
+            channel=channel,
+            workspace=scope.project_path,
+            include_memory=session.policy.persist,
+        )
+        tools = self.tools.get_definitions()
+        governance_config = ContextGovernanceConfig(
+            provider=runtime.provider,
+            model=runtime.model,
+            tools=tools,
+            workspace=scope.project_path,
+            session_key=session.key,
+            max_tool_result_chars=self.max_tool_result_chars,
+            context_window_tokens=runtime.context_window_tokens,
+            max_tokens=runtime.generation.max_tokens,
+        )
+        prepared = self.runner.context_governor.prepare_messages_for_model(
+            governance_config,
+            transcript,
+        )
+        # Display metadata, aligned by index and kept OUT of the message array
+        # so the payload stays byte-identical to the outbound request.
+        continuation = summary_continuation_text()
+        message_flags = [
+            {
+                "checkpoint": (
+                    message.get("role") == "user"
+                    and message.get("content") == continuation
+                ),
+            }
+            for message in prepared
+        ]
+        provider_state = session.provider_state
+        resumable = bool(
+            provider_state is not None
+            and runtime.provider.can_resume_conversation_state(provider_state, runtime.model)
+        )
+        return {
+            "schema_version": 1,
+            "session_key": session.key,
+            "model": runtime.model,
+            "provider": getattr(runtime.provider, "name", None),
+            "provider_state_resumable": resumable,
+            "messages": prepared,
+            "message_flags": message_flags,
+            "tools": tools,
+        }
 
     async def process_direct(
         self,

@@ -105,6 +105,7 @@ from nanobot.webui.session_automations import (
 )
 from nanobot.utils import strings
 from nanobot.utils.prompt_templates import bundled_template_defaults
+from nanobot.webui.assembled_context import assembled_context_payload
 from nanobot.webui.session_context import session_context_payload
 from nanobot.webui.session_identity import is_webui_session_key
 from nanobot.webui.session_list_index import (
@@ -347,6 +348,7 @@ class GatewayHTTPHandler:
         self.ingress = ingress
         self.workspaces = workspaces
         self.settings = settings
+        self.mcp_runtime_status = mcp_runtime_status
         self.skills_workspace_path = skills_workspace_path
         self.disabled_skills: set[str] = (
             disabled_skills if disabled_skills is not None else set()
@@ -717,6 +719,10 @@ class GatewayHTTPHandler:
         m = re.match(r"^/api/sessions/([^/]+)/context$", got)
         if m:
             return await self._handle_session_context_get(request, m.group(1))
+
+        m = re.match(r"^/api/sessions/([^/]+)/assembled-context$", got)
+        if m:
+            return await self._handle_assembled_context_get(request, m.group(1))
 
         m = re.match(r"^/api/sessions/([^/]+)/file-preview$", got)
         if m:
@@ -1232,6 +1238,25 @@ class GatewayHTTPHandler:
             )
         )
         return _http_json_response({"ok": True, "channel": channel, "chat_id": chat_id})
+
+    async def _handle_assembled_context_get(self, request: WsRequest, key: str) -> Response:
+        """Byte-exact assembled context: the real message array + tool payload."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        decoded_key = _decode_api_key(key)
+        if decoded_key is None:
+            return _http_error(400, "invalid session key")
+        if not _is_websocket_channel_session_key(decoded_key):
+            return _http_error(404, "session not found")
+        payload = await asyncio.to_thread(assembled_context_payload, decoded_key)
+        if payload is None:
+            return _http_error(404, "session not found")
+        if self.mcp_runtime_status is not None:
+            try:
+                payload["mcp_status"] = dict(self.mcp_runtime_status())
+            except Exception:
+                payload["mcp_status"] = None
+        return _http_json_response(payload)
 
     def _handle_strings_catalog(self, request: WsRequest) -> Response:
         """Read the full operator strings catalog (defaults + live overrides)."""

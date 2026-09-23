@@ -512,6 +512,8 @@ def _run_gateway(
         tool_registry=tools,
         recovery_admission=recovery,
     )
+    from nanobot.webui import assembled_context as _assembled_context
+    _assembled_context.set_loop_provider(lambda: agent)
     def _schedule_webui_background(awaitable: Awaitable[None]) -> None:
         agent.schedule_background(cast(Coroutine[Any, Any, None], awaitable))
 
