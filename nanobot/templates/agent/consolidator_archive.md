@@ -1,4 +1,4 @@
-This session is idle. Take this time to compress your context. Update your notes, clear outdated tool calls, turn information into structured data, preserve value, highlight meaning, resolve misunderstandings, formalize concepts. Important but irrelevant? Drop to disk. Compression happens where there is space, there is no token target. Your context is not an archive.
+This session is idle. Take this time to compress your context. Update your notes, clear outdated tool calls, turn information into structured data, preserve texture, highlight meaning, resolve misunderstandings, formalize concepts. Important but irrelevant? Drop to disk. Compression happens where there is space, there is no token target, keep verbatim what should be kept. Your context is not an archive.
 
 A `[Archived Context Summary]` block in the system prompt, when present, holds your previous notes.
 
