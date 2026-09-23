@@ -957,7 +957,10 @@ describe("MessageBubble", () => {
     const preview = screen.getByText("hidden until expanded");
     expect(preview).toBeInTheDocument();
     expect(screen.getByText("The answer is 42.")).toBeInTheDocument();
-    expect(preview.closest('[data-testid="activity-step"]')).toHaveClass("mb-2");
+    // ReasoningRow rework: the row is now a toggle wrapper; the mb-2
+    // spacing above the answer rides on the wrapper, not the step.
+    const toggle = preview.closest('[data-testid="reasoning-row-toggle"]');
+    expect(toggle?.parentElement).toHaveClass("mb-2");
     expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /thinking/i })).not.toBeInTheDocument();
   });

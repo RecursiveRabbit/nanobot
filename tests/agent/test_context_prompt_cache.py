@@ -83,10 +83,12 @@ def test_system_prompt_reflects_current_dream_memory_contract(tmp_path, selected
     prompt = builder.build_system_prompt(workspace=project)
 
     assert "memory/history.jsonl" in prompt
+    # Evans' 2026-09-17 directive: the Dream-edit gate line was removed
+    # from the identity template with the rest of the profile system.
     assert (
         "Only Dream memory-consolidation tasks may edit the profile and long-term memory files "
         "listed above."
-    ) in prompt
+    ) not in prompt
 
 
 def test_provider_context_appended_after_user_content(tmp_path) -> None:
@@ -257,11 +259,12 @@ def test_template_memory_md_is_skipped(tmp_path) -> None:
 
 
 def test_customized_memory_md_is_injected(tmp_path, monkeypatch) -> None:
-    """A Dream-populated MEMORY.md should be injected normally."""
+    """An agent-authored MEMORY.md is injected as the resident's own
+    continuity file. Sync no longer seeds the file (Evans 2026-09-17:
+    harness-shipped profile files must not respawn), so the test creates
+    it directly — the injection path itself is unchanged."""
     workspace = _make_workspace(tmp_path)
-    from nanobot.utils.helpers import sync_workspace_templates
-    sync_workspace_templates(workspace, silent=True)
-
+    (workspace / "memory").mkdir(exist_ok=True)
     (workspace / "memory" / "MEMORY.md").write_text(
         "# Long-term Memory\n\nUser prefers dark mode.\n", encoding="utf-8"
     )

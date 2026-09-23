@@ -160,9 +160,12 @@ class TestLoadBootstrapFiles:
 
         result = ContextBuilder(tmp_path)._load_bootstrap_files()
 
+        # Evans' 2026-09-17 directive: sync seeds nothing, so a fresh
+        # workspace yields no bootstrap content at all — SOUL.md included.
         assert "## AGENTS.md" not in result
         assert "## USER.md" not in result
-        assert "## SOUL.md" in result
+        assert "## SOUL.md" not in result
+        assert result == ""
 
     def test_customized_user_template_is_loaded(self, tmp_path):
         from nanobot.utils.helpers import sync_workspace_templates
@@ -306,7 +309,9 @@ class TestBuildSystemPrompt:
         result = ContextBuilder(tmp_path)._get_identity()
 
         assert str(tmp_path.resolve()) not in result
-        assert "Agent profile: SOUL.md and USER.md" in result
+        # Evans' 2026-09-17 directive: no harness profile pointers.
+        assert "SOUL.md" not in result
+        assert "USER.md" not in result
         assert "History log: memory/history.jsonl" in result
         assert "Custom skills: skills/{skill-name}/SKILL.md" in result
 
@@ -320,8 +325,10 @@ class TestBuildSystemPrompt:
 
         assert str(project.resolve()) not in result
         assert f"agent workspace is at: {agent_home.resolve()}" in result
-        assert f"{agent_home.resolve()}/SOUL.md" in result
-        assert f"{project.resolve()}/SOUL.md" not in result
+        # Evans' 2026-09-17 directive: agent data lives in the agent
+        # workspace, but the identity names no SOUL.md/USER.md pointers.
+        assert "SOUL.md" not in result
+        assert f"{agent_home.resolve()}/memory/history.jsonl" in result
 
     def test_includes_bootstrap_files(self, tmp_path):
         (tmp_path / "AGENTS.md").write_text("Be helpful and concise.", encoding="utf-8")

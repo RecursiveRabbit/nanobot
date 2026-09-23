@@ -368,21 +368,28 @@ class TestSyncWorkspaceTemplates:
         assert tools_path.read_text(encoding="utf-8") == "custom tool notes"
 
     def test_creates_memory_directory(self, tmp_path):
-        """Should create memory directory structure."""
+        """Evans' 2026-09-17 directive: sync is disabled and seeds nothing;
+        the resident creates its own memory/ structure when it writes."""
         workspace = tmp_path / "workspace"
 
         sync_workspace_templates(workspace, silent=True)
 
-        assert (workspace / "memory").exists() or (workspace / "skills").exists()
+        assert not (workspace / "memory").exists()
+        assert not (workspace / "skills").exists()
 
-    def test_creates_prompt_readme_without_dream_override(self, tmp_path):
+    def test_sync_disabled_creates_nothing(self, tmp_path):
+        """Evans' 2026-09-17 directive: the workspace must not respawn
+        harness-shipped profile files (SOUL.md, USER.md, AGENTS.md,
+        HEARTBEAT.md, memory/MEMORY.md, prompts/README.md) after they have
+        been deliberately deleted. Sync is disabled entirely."""
         workspace = tmp_path / "workspace"
 
         added = sync_workspace_templates(workspace, silent=True)
 
-        assert "prompts/README.md" in {path.replace("\\", "/") for path in added}
-        assert (workspace / "prompts" / "README.md").exists()
-        assert not (workspace / "prompts" / "dream.md").exists()
+        assert added == []
+        assert not (workspace / "prompts" / "README.md").exists()
+        assert not (workspace / "SOUL.md").exists()
+        assert not (workspace / "USER.md").exists()
 
     def test_returns_list_of_added_files(self, tmp_path):
         """Should return list of relative paths for added files."""
