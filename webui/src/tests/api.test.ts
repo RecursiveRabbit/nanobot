@@ -23,6 +23,7 @@ import {
   fetchProviderModels,
   fetchSessionAutomations,
   fetchSessionContext,
+  fetchStringsCatalog,
   fetchSettingsUsage,
   fetchSidebarState,
   fetchSkillDetail,
@@ -51,6 +52,7 @@ import {
   pollChannelConnect,
   startChannelConnect,
   updateAutomation,
+  updateStringOverride,
   updateSidebarState,
   updateImageGenerationSettings,
   updateModelCallOrder,
@@ -135,6 +137,37 @@ describe("webui API helpers", () => {
 
     await expect(request).rejects.toMatchObject({ name: "AbortError" });
     expect(requestSignal?.aborted).toBe(true);
+  });
+
+  it("fetches the strings catalog", async () => {
+    await fetchStringsCatalog("tok");
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/strings/catalog",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer tok" },
+      }),
+    );
+  });
+
+  it("sends string overrides through the mutation transport", async () => {
+    await updateStringOverride(mutationTransport, "template:agent/identity.md", "new text");
+
+    expect(requestMutation).toHaveBeenCalledWith(
+      "strings.update",
+      { key: "template:agent/identity.md", value: "new text", reset: false },
+      expect.any(Number),
+    );
+  });
+
+  it("sends string resets through the mutation transport", async () => {
+    await updateStringOverride(mutationTransport, "literal:empty_tool_result", null);
+
+    expect(requestMutation).toHaveBeenCalledWith(
+      "strings.update",
+      { key: "literal:empty_tool_result", value: null, reset: true },
+      expect.any(Number),
+    );
   });
 
   it("percent-encodes websocket keys when fetching full session context", async () => {

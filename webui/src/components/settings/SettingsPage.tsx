@@ -39,6 +39,7 @@ import { ChannelsSettings } from "@/components/settings/system/ChannelsSettings"
 import { RUNTIME_CONFIG_FIELDS, type RuntimeConfigPage } from "@/components/settings/system/runtime-config-fields";
 import { RuntimeConfigSettings } from "@/components/settings/system/RuntimeConfigSettings";
 import { RuntimeSettings } from "@/components/settings/system/RuntimeSettings";
+import { StringsSettings } from "@/components/settings/StringsSettings";
 import type { SettingsController } from "@/components/settings/useSettingsController";
 import type { SkillSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -582,6 +583,8 @@ export function SettingsPage({
         );
       case "skills":
         return <SkillsCatalogSettings skills={skills} />;
+      case "strings":
+        return <StringsSettings />;
       case "runtime":
         return (
           <div className="settings-stack">

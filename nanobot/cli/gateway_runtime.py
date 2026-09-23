@@ -43,6 +43,7 @@ from nanobot.webui.build import BuildMode
 from nanobot.webui.dev import WebUIDevError, WebUIDevServer
 from nanobot.webui.sidebar_state import read_webui_sidebar_state
 
+from nanobot.utils import strings
 from nanobot.utils.strings import register_literal, text as string_text
 
 __all__ = ["_run_gateway"]

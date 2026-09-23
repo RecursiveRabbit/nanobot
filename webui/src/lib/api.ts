@@ -290,6 +290,45 @@ export async function fetchSessionContext(
   );
 }
 
+/** Operator-owned injectable strings catalog (context injection surface). */
+export interface StringCatalogEntry {
+  key: string;
+  group: string;
+  advanced: boolean;
+  default: string;
+  override: string | null;
+  effective: string;
+  overridden: boolean;
+}
+
+export interface StringsCatalogPayload {
+  strings: StringCatalogEntry[];
+}
+
+export async function fetchStringsCatalog(
+  token: string,
+  base: string = "",
+): Promise<StringsCatalogPayload> {
+  return request<StringsCatalogPayload>(
+    `${base}/api/strings/catalog`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+export async function updateStringOverride(
+  transport: WebUIMutationTransport,
+  key: string,
+  value: string | null,
+): Promise<StringsCatalogPayload> {
+  return mutation<StringsCatalogPayload>(transport, "strings.update", {
+    key,
+    value,
+    reset: value === null,
+  });
+}
+
 export async function fetchFilePreview(
   token: string,
   key: string,

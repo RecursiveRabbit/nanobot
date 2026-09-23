@@ -51,6 +51,18 @@
       "noMatch": "没有待处理请求与此配对码匹配。"
     }
   },
+  "stringsPage": {
+    "title": "Context strings",
+    "intro": "Every string the system can inject into the model's context. Edit to override the bundled default; changes apply live. Reset returns to the default.",
+    "search": "Search strings…",
+    "loading": "Loading strings…",
+    "overridden": "overridden",
+    "reset": "Reset to default",
+    "editingOverride": "Editing your override",
+    "editingDefault": "Editing the bundled default — saving creates your override",
+    "showAdvanced": "Show advanced ({{count}})",
+    "hideAdvanced": "Hide advanced"
+  },
   "modelView": {
     "toggle": "Model context",
     "notes": "Working notes (checkpoint)",
@@ -374,6 +386,7 @@
       "overview": "概览",
       "appearance": "外观",
       "models": "模型",
+      "strings": "Context strings",
       "providers": "提供商",
       "image": "图片",
       "voice": "语音",
