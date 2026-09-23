@@ -38,11 +38,40 @@ from nanobot.utils.helpers import (
 )
 from nanobot.utils.prompt_templates import render_template
 from nanobot.utils.workspace_prompts import (
+
     WORKSPACE_PROMPT_MAX_CHARS,
     has_workspace_prompt_override,
     load_workspace_prompt_override,
     workspace_prompt_file,
 )
+
+from nanobot.utils.strings import register_literal, text as string_text
+
+_RAW_CHECKPOINT_HEADER = register_literal(
+    "literal:raw_checkpoint_header",
+    "[RAW] {count} messages\n",
+    group="Compaction",
+    advanced=True,
+)
+_RAW_CHECKPOINT_LINE = register_literal(
+    "literal:raw_checkpoint_line",
+    "[{timestamp}] {role}{tools}: {content}",
+    group="Compaction",
+    advanced=True,
+)
+_RAW_CHECKPOINT_LINE_TOOLS = register_literal(
+    "literal:raw_checkpoint_line_tools",
+    " [tools: {tools}]",
+    group="Compaction",
+    advanced=True,
+)
+_DREAM_HISTORY_HEADER = register_literal(
+    "literal:dream_history_header",
+    "\n\n## Conversation History\n{history}",
+    group="Memory pipeline",
+    advanced=True,
+)
+
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.registry import ToolRegistry
@@ -557,7 +586,11 @@ class MemoryStore:
             for e in batch
         )
         template = self._dream_template()
-        prompt = f"{template}\n\n## Conversation History\n{history_text}"
+        prompt = (
+            template
+            + string_text("literal:dream_history_header", _DREAM_HISTORY_HEADER)
+            .replace("{history}", history_text)
+        )
         return (prompt, batch[-1]["cursor"])
 
     def dream_content_diff(self) -> str:
@@ -650,14 +683,21 @@ class MemoryStore:
                 continue
             tools_used = message.get("tools_used")
             tools = (
-                f" [tools: {', '.join(cast(list[str], tools_used))}]"
+                string_text("literal:raw_checkpoint_line_tools", _RAW_CHECKPOINT_LINE_TOOLS)
+                .replace("{tools}", ", ".join(cast(list[str], tools_used)))
                 if tools_used
                 else ""
             )
             raw_timestamp = message.get("timestamp")
             timestamp = str(raw_timestamp) if raw_timestamp is not None else "?"
             role = str(message.get("role") or "unknown")
-            lines.append(f"[{timestamp[:16]}] {role.upper()}{tools}: {content}")
+            lines.append(
+                string_text("literal:raw_checkpoint_line", _RAW_CHECKPOINT_LINE)
+                .replace("{timestamp}", timestamp[:16])
+                .replace("{role}", role.upper())
+                .replace("{tools}", tools)
+                .replace("{content}", content)
+            )
         return "\n".join(lines)
 
     def raw_archive(
@@ -684,8 +724,9 @@ class MemoryStore:
         """Build the same bounded checkpoint as :meth:`raw_archive` without writing it."""
         limit = max_chars if max_chars is not None else _RAW_ARCHIVE_MAX_CHARS
         checkpoint = (
-            f"[RAW] {len(messages)} messages\n"
-            f"{self._format_messages(public_history_messages(messages))}"
+            string_text("literal:raw_checkpoint_header", _RAW_CHECKPOINT_HEADER)
+            .replace("{count}", str(len(messages)))
+            + self._format_messages(public_history_messages(messages))
         )
         return self._normalize_history_entry(checkpoint, max_chars=limit)
 

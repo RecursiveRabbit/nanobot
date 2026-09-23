@@ -11,6 +11,34 @@ import yaml
 
 from nanobot.runtime_context import RuntimeContextBlock
 
+from nanobot.utils.strings import register_literal, text as string_text
+
+_SKILLS_GROUP_HEADER = register_literal(
+    "literal:skills_group_header",
+    "### {label} (`{display_root}`)",
+    group="System prompt",
+    advanced=True,
+)
+_SKILLS_SUMMARY_LINE = register_literal(
+    "literal:skills_summary_line",
+    "- **{name}** — {desc}{suffix}  `{path}`",
+    group="System prompt",
+    advanced=True,
+)
+_SKILLS_UNAVAILABLE_DETAIL = register_literal(
+    "literal:skills_unavailable_detail",
+    " (unavailable: {missing})",
+    group="System prompt",
+    advanced=True,
+)
+_SKILLS_UNAVAILABLE_PLAIN = register_literal(
+    "literal:skills_unavailable_plain",
+    " (unavailable)",
+    group="System prompt",
+    advanced=True,
+)
+
+
 # Default builtin skills directory (relative to this file)
 BUILTIN_SKILLS_DIR = Path(__file__).parent.parent / "skills"
 
@@ -247,7 +275,8 @@ class SkillsLoader:
                 display_root = Path("plugins" if source == "plugin" else "skills")
             else:
                 display_root = resolved_root
-            lines = [f"### {label} (`{display_root}`)"]
+            lines = [string_text("literal:skills_group_header", _SKILLS_GROUP_HEADER)
+                     .replace("{label}", label).replace("{display_root}", str(display_root))]
             for entry in entries:
                 skill_name = entry["name"]
                 meta = self._get_skill_meta(skill_name)
@@ -256,9 +285,20 @@ class SkillsLoader:
                 suffix = ""
                 if not available:
                     missing = self._get_missing_requirements(meta)
-                    suffix = f" (unavailable: {missing})" if missing else " (unavailable)"
+                    suffix = (
+                    string_text("literal:skills_unavailable_detail", _SKILLS_UNAVAILABLE_DETAIL)
+                    .replace("{missing}", missing)
+                    if missing
+                    else string_text("literal:skills_unavailable_plain", _SKILLS_UNAVAILABLE_PLAIN)
+                )
                 relative_path = Path(entry["path"]).relative_to(root).as_posix()
-                lines.append(f"- **{skill_name}** — {desc}{suffix}  `{relative_path}`")
+                lines.append(
+                    string_text("literal:skills_summary_line", _SKILLS_SUMMARY_LINE)
+                    .replace("{name}", skill_name)
+                    .replace("{desc}", desc)
+                    .replace("{suffix}", suffix)
+                    .replace("{path}", relative_path)
+                )
             sections.append("\n".join(lines))
         return "\n\n".join(sections)
 

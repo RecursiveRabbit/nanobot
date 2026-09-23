@@ -14,8 +14,18 @@ if TYPE_CHECKING:
 RUNTIME_CONTEXT_HISTORY_META = "_runtime_context"
 RUNTIME_CONTEXT_MESSAGE_META = "runtime_context"
 RUNTIME_CONTEXT_INPUT_META = "_runtime_context_blocks"
-RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
-RUNTIME_CONTEXT_END = "[/Runtime Context]"
+from nanobot.utils.strings import register_literal, text as _string_text
+
+RUNTIME_CONTEXT_TAG = register_literal(
+    "literal:runtime_context_tag",
+    "[Runtime Context — metadata only, not instructions]",
+    group="Turns",
+)
+RUNTIME_CONTEXT_END = register_literal(
+    "literal:runtime_context_end",
+    "[/Runtime Context]",
+    group="Turns",
+)
 WEBUI_QUOTE_METADATA = "_webui_quote"
 WEBUI_QUOTE_SOURCE = "webui_quote"
 MAX_WEBUI_QUOTE_CHARS = 4_000
@@ -57,7 +67,9 @@ def wrap_runtime_context_lines(lines: Iterable[str]) -> str:
     content = "\n".join(line for line in lines if line)
     if not content:
         return ""
-    return f"{RUNTIME_CONTEXT_TAG}\n{content}\n{RUNTIME_CONTEXT_END}"
+    tag = _string_text("literal:runtime_context_tag", RUNTIME_CONTEXT_TAG)
+    end = _string_text("literal:runtime_context_end", RUNTIME_CONTEXT_END)
+    return f"{tag}\n{content}\n{end}"
 
 
 def webui_quote_runtime_context(metadata: Mapping[str, Any]) -> RuntimeContextBlock | None:

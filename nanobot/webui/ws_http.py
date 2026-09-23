@@ -103,6 +103,8 @@ from nanobot.webui.session_automations import (
     session_automation_jobs,
     session_automations_payload,
 )
+from nanobot.utils import strings
+from nanobot.utils.prompt_templates import bundled_template_defaults
 from nanobot.webui.session_context import session_context_payload
 from nanobot.webui.session_identity import is_webui_session_key
 from nanobot.webui.session_list_index import (
@@ -151,6 +153,7 @@ _WEBUI_MUTATION_PATHS = {
     "recovery.continue": "/api/webui/recovery/continue",
     "recovery.dismiss": "/api/webui/recovery/dismiss",
     "settings.agent.update": "/api/settings/update",
+    "strings.update": "/api/strings/update",
     "settings.model_configuration.create": "/api/settings/model-configurations/create",
     "settings.model_configuration.update": "/api/settings/model-configurations/update",
     "settings.model_configuration.delete": "/api/settings/model-configurations/delete",
@@ -465,6 +468,8 @@ class GatewayHTTPHandler:
         if re.match(r"^/api/webui/automations/(enable|disable|delete|run|update)$", path):
             return True
         if path in {"/api/webui/recovery/continue", "/api/webui/recovery/dismiss"}:
+            return True
+        if path == "/api/strings/update":
             return True
         return path in {
             "/api/webui/skills/install",
@@ -1168,6 +1173,38 @@ class GatewayHTTPHandler:
             return await self._handle_stop_session(request)
         if got == "/api/sessions":
             return await self._handle_sessions_list(request)
+        if got == "/api/strings/catalog":
+            return self._handle_strings_catalog(request)
+        if got == "/api/strings/update":
+            return await self._handle_strings_update(request)
+        if got == "/api/commands":
+            return self._handle_commands(request)
+        if got == "/api/workspaces/pick-folder":
+            return await self._handle_workspace_folder_picker(connection, request)
+        if got == "/api/workspaces":
+            return self._handle_workspaces(connection, request)
+        if got == "/api/webui/skills/search":
+            return await self._handle_webui_skills_search(request)
+        if got == "/api/webui/skills/trending":
+            return await self._handle_webui_skills_trending(request)
+        if got == "/api/webui/skills/trends":
+            return self._handle_webui_skill_trends(request)
+        if got == "/api/webui/skills/install":
+            return await self._handle_webui_skill_install(connection, request)
+        if got == "/api/webui/skills/update":
+            return self._handle_webui_skill_update(request)
+        if got == "/api/webui/skills/delete":
+            return self._handle_webui_skill_delete(connection, request)
+        if got == "/api/webui/skills":
+            return self._handle_webui_skills(request)
+        m = re.match(r"^/api/webui/skills/([^/]+)$", got)
+        if m:
+            return self._handle_webui_skill_detail(request, m.group(1))
+        if got == "/api/webui/sidebar-state":
+            return self._handle_webui_sidebar_state(request)
+        if got == "/api/webui/sidebar-state/update":
+            return self._handle_webui_sidebar_state_update(request)
+        return None
 
     async def _handle_stop_session(self, request: WsRequest) -> Response:
         """Publish /stop for any channel session (localhost operator tooling).
@@ -1196,34 +1233,45 @@ class GatewayHTTPHandler:
         )
         return _http_json_response({"ok": True, "channel": channel, "chat_id": chat_id})
 
-        if got == "/api/commands":
-            return self._handle_commands(request)
-        if got == "/api/workspaces/pick-folder":
-            return await self._handle_workspace_folder_picker(connection, request)
-        if got == "/api/workspaces":
-            return self._handle_workspaces(connection, request)
-        if got == "/api/webui/skills/search":
-            return await self._handle_webui_skills_search(request)
-        if got == "/api/webui/skills/trending":
-            return await self._handle_webui_skills_trending(request)
-        if got == "/api/webui/skills/trends":
-            return await self._handle_webui_skill_trends(request)
-        if got == "/api/webui/skills/install":
-            return await self._handle_webui_skill_install(connection, request)
-        if got == "/api/webui/skills/update":
-            return self._handle_webui_skill_update(request)
-        if got == "/api/webui/skills/delete":
-            return self._handle_webui_skill_delete(connection, request)
-        if got == "/api/webui/skills":
-            return self._handle_webui_skills(request)
-        m = re.match(r"^/api/webui/skills/([^/]+)$", got)
-        if m:
-            return self._handle_webui_skill_detail(request, m.group(1))
-        if got == "/api/webui/sidebar-state":
-            return self._handle_webui_sidebar_state(request)
-        if got == "/api/webui/sidebar-state/update":
-            return self._handle_webui_sidebar_state_update(request)
-        return None
+    def _handle_strings_catalog(self, request: WsRequest) -> Response:
+        """Read the full operator strings catalog (defaults + live overrides)."""
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        return _http_json_response({
+            "strings": strings.catalog(
+                template_defaults=bundled_template_defaults(),
+            ),
+        })
+
+    async def _handle_strings_update(self, request: WsRequest) -> Response:
+        """Set or clear one operator string override; live, no restart."""
+        if not getattr(request, _WEBUI_MUTATION_REQUEST_ATTR, False):
+            return _http_error(405, "WebUI mutations require an authenticated WebSocket")
+        payload = _mutation_payload(request)
+        if payload is None:
+            return _http_error(400, "invalid strings payload")
+        key = str(payload.get("key") or "").strip()
+        if not key:
+            return _http_error(400, "key is required")
+        reset = bool(payload.get("reset")) or payload.get("value") is None
+        value = payload.get("value")
+
+        def _mutate(config: Any) -> None:
+            entries = dict(config.agents.defaults.strings)
+            if reset:
+                entries.pop(key, None)
+            else:
+                entries[key] = str(value)
+            config.agents.defaults.strings = entries
+
+        await asyncio.to_thread(self.settings.config.update, _mutate)
+        strings.set_overrides(self.settings.config.load().agents.defaults.strings)
+        return _http_json_response({
+            "ok": True,
+            "strings": strings.catalog(
+                template_defaults=bundled_template_defaults(),
+            ),
+        })
 
     def _handle_commands(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):

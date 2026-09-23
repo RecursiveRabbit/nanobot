@@ -43,6 +43,8 @@ from nanobot.webui.build import BuildMode
 from nanobot.webui.dev import WebUIDevError, WebUIDevServer
 from nanobot.webui.sidebar_state import read_webui_sidebar_state
 
+from nanobot.utils.strings import register_literal, text as string_text
+
 __all__ = ["_run_gateway"]
 
 console = Console()
@@ -163,12 +165,21 @@ def _commit_dream_changes(memory: Any) -> str | None:
     return memory.git.auto_commit(message)
 
 
-_HEARTBEAT_PREAMBLE = (
+_HEARTBEAT_PREAMBLE = register_literal(
+    "literal:heartbeat_preamble",
     "[Your response will be delivered directly to the user's messaging app. "
     "Output ONLY the final user-facing message. Never reference internal "
     "files (HEARTBEAT.md, AWARENESS.md, etc.), your instructions, or your "
     "decision process. If nothing needs reporting, respond with just "
-    "'All clear.' and nothing else.]\n\n"
+    "'All clear.' and nothing else.]\n\n",
+    group="Scheduled work",
+)
+
+_HEARTBEAT_TASK_INSTRUCTION = register_literal(
+    "literal:heartbeat_task_instruction",
+    "You are executing periodic heartbeat tasks. Read the active tasks below, "
+    "perform each one, and report what you did:\n\n{content}",
+    group="Scheduled work",
 )
 
 
@@ -470,6 +481,9 @@ def _run_gateway(
     )
 
     tools = ToolRegistry()
+    strings.set_tool_definitions_provider(
+        lambda: tools.get_definitions(apply_overrides=False)
+    )
     mcp_provider = MCPProvider.from_config(config, tools)
 
     recovery = RecoveryCoordinator(
@@ -635,8 +649,9 @@ def _run_gateway(
                 return None
 
             prompt = (
-                _HEARTBEAT_PREAMBLE
-                + f"You are executing periodic heartbeat tasks. Read the active tasks below, perform each one, and report what you did:\n\n{content}"
+                string_text("literal:heartbeat_preamble", _HEARTBEAT_PREAMBLE)
+                + string_text("literal:heartbeat_task_instruction", _HEARTBEAT_TASK_INSTRUCTION)
+                .replace("{content}", content)
             )
 
             # Internal check: funnel all output through the post-run gate so the

@@ -30,6 +30,43 @@ from nanobot.session.manager import Session
 from nanobot.session.summary import SessionSummary
 from nanobot.utils.helpers import detect_image_mime, load_bundled_template
 from nanobot.utils.prompt_templates import render_template
+from nanobot.utils.strings import register_literal, text as string_text
+
+_CURRENT_PROJECT_DEFAULT = register_literal(
+    "literal:current_project_block",
+    "# Current Project\n\n"
+    "Working directory: {project_path}\n"
+    "Use it as the default root for project files and relative tool paths.",
+    group="System prompt",
+)
+
+_MEMORY_SECTION_DEFAULT = register_literal(
+    "literal:memory_section",
+    "# Memory\n\n## Long-term Memory\n{memory}",
+    group="System prompt",
+)
+
+_ACTIVE_SKILLS_DEFAULT = register_literal(
+    "literal:active_skills_section",
+    "# Active Skills\n\n{content}",
+    group="System prompt",
+    advanced=True,
+)
+
+_BOOTSTRAP_SECTION_DEFAULT = register_literal(
+    "literal:bootstrap_file_section",
+    "## {filename}\n\n{content}",
+    group="System prompt",
+    advanced=True,
+)
+
+_ARCHIVED_SUMMARY_DEFAULT = register_literal(
+    "literal:archived_summary_block",
+    "[Archived Context Summary]\n\n"
+    "Previous conversation summary (last active {last_active}):\n"
+    "{text}",
+    group="Compaction",
+)
 
 
 def session_extra(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -119,21 +156,26 @@ class ContextBuilder:
         project_path = root.expanduser().resolve()
         if project_path != self.workspace.expanduser().resolve():
             parts.append(
-                "# Current Project\n\n"
-                f"Working directory: {project_path}\n"
-                "Use it as the default root for project files and relative tool paths."
+                string_text("literal:current_project_block", _CURRENT_PROJECT_DEFAULT)
+                .replace("{project_path}", str(project_path))
             )
 
         if include_memory:
             memory = self.memory.read_memory()
             if memory and not self._is_template_content(memory, "memory/MEMORY.md"):
-                parts.append(f"# Memory\n\n## Long-term Memory\n{memory}")
+                parts.append(
+                    string_text("literal:memory_section", _MEMORY_SECTION_DEFAULT)
+                    .replace("{memory}", memory)
+                )
 
         active_skills = self.skills.get_always_skills()
         if active_skills:
             active_content = self.skills.load_skills_for_context(active_skills)
             if active_content:
-                parts.append(f"# Active Skills\n\n{active_content}")
+                parts.append(
+                    string_text("literal:active_skills_section", _ACTIVE_SKILLS_DEFAULT)
+                    .replace("{content}", active_content)
+                )
 
         skills_summary = self.skills.build_skills_summary(
             exclude=set(active_skills),
@@ -144,9 +186,9 @@ class ContextBuilder:
 
         if session_summary and session_summary["text"] != "(nothing)":
             parts.append(
-                "[Archived Context Summary]\n\n"
-                f"Previous conversation summary (last active {session_summary['last_active']}):\n"
-                f"{session_summary['text']}"
+                string_text("literal:archived_summary_block", _ARCHIVED_SUMMARY_DEFAULT)
+                .replace("{last_active}", session_summary["last_active"])
+                .replace("{text}", session_summary["text"])
             )
 
         return "\n\n---\n\n".join(parts)
@@ -216,7 +258,11 @@ class ContextBuilder:
                     content, filename
                 ):
                     continue
-                parts.append(f"## {filename}\n\n{content}")
+                parts.append(
+                    string_text("literal:bootstrap_file_section", _BOOTSTRAP_SECTION_DEFAULT)
+                    .replace("{filename}", filename)
+                    .replace("{content}", content)
+                )
 
         return "\n\n".join(parts) if parts else ""
 

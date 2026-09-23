@@ -77,6 +77,7 @@ def load_config(config_path: Path | None = None) -> Config:
             ) from exc
         config.bind_source_path(path)
         _apply_ssrf_whitelist(config)
+        _apply_strings_overrides(config)
         return config
 
     try:
@@ -133,6 +134,7 @@ def load_config(config_path: Path | None = None) -> Config:
 
     config.bind_source_path(path)
     _apply_ssrf_whitelist(config)
+    _apply_strings_overrides(config)
     return config
 
 
@@ -141,6 +143,13 @@ def _apply_ssrf_whitelist(config: Config) -> None:
     from nanobot.security.network import configure_ssrf_whitelist
 
     configure_ssrf_whitelist(config.tools.ssrf_whitelist)
+
+
+def _apply_strings_overrides(config: Config) -> None:
+    """Apply operator-owned injectable-string overrides to the strings layer."""
+    from nanobot.utils import strings
+
+    strings.set_overrides(config.agents.defaults.strings)
 
 
 def save_config(config: Config, config_path: Path | None = None) -> None:

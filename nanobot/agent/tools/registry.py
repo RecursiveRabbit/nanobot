@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any, cast
 
 from nanobot.agent.tools.base import Tool, ToolResult
+from nanobot.utils import strings
 from nanobot.agent.tools.context import ContextAware, current_request_context
 
 if TYPE_CHECKING:
@@ -83,12 +85,15 @@ class ToolRegistry:
         name = schema.get("name")
         return name if isinstance(name, str) else ""
 
-    def get_definitions(self) -> list[dict[str, Any]]:
+    def get_definitions(self, *, apply_overrides: bool = True) -> list[dict[str, Any]]:
         """Get tool definitions with stable ordering for cache-friendly prompts.
 
         Built-in tools are sorted first as a stable prefix, then MCP tools are
         sorted and appended. The result is cached until the next
         register/unregister call.
+
+        ``apply_overrides=False`` returns the pristine cached schemas (used by
+        the operator strings catalog to show defaults beside overrides).
         """
         if self._cached_definitions is None:
             definitions = [tool.to_schema() for tool in self._tools.values()]
@@ -105,7 +110,40 @@ class ToolRegistry:
             mcp_tools.sort(key=self._schema_name)
             self._cached_definitions = builtins + mcp_tools
 
-        return self._cached_definitions
+        if not apply_overrides:
+            return self._cached_definitions
+        overrides = strings.overrides_snapshot()
+        if not any(key.startswith("tool:") for key in overrides):
+            return self._cached_definitions
+        # Operator-owned string overrides apply per call so edits take effect
+        # without restarting; the pristine cache stays untouched.
+        return [
+            self._apply_string_overrides(schema, overrides)
+            for schema in self._cached_definitions
+        ]
+
+    @staticmethod
+    def _apply_string_overrides(
+        schema: dict[str, Any], overrides: dict[str, str]
+    ) -> dict[str, Any]:
+        """Return a copy of *schema* with operator string overrides applied."""
+        schema = deepcopy(schema)
+        fn = schema.get("function", schema)
+        name = fn.get("name")
+        if not isinstance(name, str):
+            return schema
+        description_override = overrides.get(f"tool:{name}:description")
+        if description_override is not None:
+            fn["description"] = description_override
+        params = fn.get("parameters")
+        if isinstance(params, dict):
+            properties = params.get("properties")
+            if isinstance(properties, dict):
+                for param, spec in properties.items():
+                    override = overrides.get(f"tool:{name}:param:{param}")
+                    if override is not None and isinstance(spec, dict):
+                        spec["description"] = override
+        return schema
 
     def prepare_call(
         self,

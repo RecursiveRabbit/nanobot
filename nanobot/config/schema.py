@@ -155,6 +155,9 @@ class AgentDefaults(Base):
         ge=0,
     )  # Minimum interval in seconds between scans for idle sessions
     dream: DreamConfig = Field(default_factory=DreamConfig)
+    strings: dict[str, str] = Field(
+        default_factory=dict,
+    )  # Operator-owned overrides for injectable strings (template:/literal:/tool: keys)
 
     @model_validator(mode="before")
     @classmethod

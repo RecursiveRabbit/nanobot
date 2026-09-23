@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from nanobot.utils.strings import register_literal, text as string_text
+
 import re
 from pathlib import Path
 from typing import Any, cast
@@ -40,9 +42,17 @@ LENGTH_RECOVERY_PROMPT = (
     "existing text, recap, or apologize."
 )
 
+_EMPTY_TOOL_RESULT_DEFAULT = register_literal(
+    "literal:empty_tool_result",
+    "({tool_name} completed with no output)",
+    group="Turns",
+)
+
+
 def empty_tool_result_message(tool_name: str) -> str:
     """Short prompt-safe marker for tools that completed without visible output."""
-    return f"({tool_name} completed with no output)"
+    template = string_text("literal:empty_tool_result", _EMPTY_TOOL_RESULT_DEFAULT)
+    return template.replace("{tool_name}", tool_name)
 
 
 def ensure_nonempty_tool_result(tool_name: str, content: Any) -> Any:

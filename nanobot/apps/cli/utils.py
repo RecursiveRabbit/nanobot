@@ -5,6 +5,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping, cast
 
+from nanobot.utils.strings import register_literal, text as string_text
+
+_CLI_APP_MENTION_DEFAULT = register_literal(
+    "literal:cli_app_mention_line",
+    "CLI App Mention: @{name} (installed; tool={tool}; entry_point={entry_point}; "
+    "skill={skill}). Read the skill when useful, then run this app with `run_cli_app`; "
+    "do not bypass it with shell.",
+    group="Turns",
+    advanced=True,
+)
+
+
 
 def session_extra(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
     """Return persisted session kwargs for CLI app attachments."""
@@ -51,11 +63,10 @@ def runtime_lines_for_request(
     except Exception:
         return []
     return [
-        "CLI App Mention: "
-        f"@{item['name']} "
-        f"(installed; tool={item['tool']}; "
-        f"entry_point={item['entry_point'] or 'unknown'}; "
-        f"skill={item['skill']}). "
-        "Read the skill when useful, then run this app with `run_cli_app`; do not bypass it with shell."
+        string_text("literal:cli_app_mention_line", _CLI_APP_MENTION_DEFAULT)
+        .replace("{name}", str(item["name"]))
+        .replace("{tool}", str(item["tool"]))
+        .replace("{entry_point}", str(item["entry_point"] or "unknown"))
+        .replace("{skill}", str(item["skill"]))
         for item in mentions
     ]

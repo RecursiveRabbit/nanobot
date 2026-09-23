@@ -29,7 +29,16 @@ from nanobot.runtime_context import (
 )
 from nanobot.session.history_visibility import HIDDEN_HISTORY_META, is_hidden_history_message
 from nanobot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
-from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT
+from nanobot.session.summary import summary_continuation_text
+from nanobot.utils.strings import register_literal, text as string_text
+
+_CLI_APP_ATTACHMENT_DEFAULT = register_literal(
+    "literal:cli_app_attachment_line",
+    "[CLI App Attachment: @{name}; tool=run_cli_app; entry_point={entry_point}; "
+    "skill=skills/cli-app-{name}/SKILL.md]",
+    group="Turns",
+    advanced=True,
+)
 from nanobot.utils.helpers import (
     content_with_media_breadcrumbs,
     ensure_dir,
@@ -331,7 +340,7 @@ class Session:
         boundary = len(self.messages) if insert_at is None else insert_at
         self.messages.insert(boundary, {
             "role": "user",
-            "content": SUMMARY_CONTINUATION_TEXT,
+            "content": summary_continuation_text(),
             HIDDEN_HISTORY_META: True,
             "timestamp": datetime.now().isoformat(),
         })
@@ -426,8 +435,9 @@ class Session:
                         str(item_data.get("entry_point") or "unknown").strip() or "unknown"
                     )
                     cli_lines.append(
-                        f"[CLI App Attachment: @{name}; tool=run_cli_app; entry_point={entry_point}; "
-                        f"skill=skills/cli-app-{name}/SKILL.md]"
+                        string_text("literal:cli_app_attachment_line", _CLI_APP_ATTACHMENT_DEFAULT)
+                        .replace("{name}", name)
+                        .replace("{entry_point}", entry_point)
                     )
                 if cli_lines:
                     breadcrumbs = "\n".join(cli_lines)

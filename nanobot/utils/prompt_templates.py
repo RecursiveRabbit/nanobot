@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
+from loguru import logger
+
+from nanobot.utils import strings
 
 _TEMPLATES_ROOT = Path(__file__).resolve().parent.parent / "templates"
 
@@ -31,5 +34,24 @@ def render_template(name: str, *, strip: bool = False, **kwargs: Any) -> str:
     Use ``strip=True`` for single-line user-facing strings when the file ends
     with a trailing newline you do not want preserved.
     """
+    override = strings.get_override(f"template:{name}")
+    if override is not None:
+        try:
+            text = _environment().from_string(override).render(**kwargs)
+            return text.rstrip() if strip else text
+        except Exception:
+            logger.warning(
+                "Strings override for template {} failed to render; using bundled default",
+                name,
+            )
     text = _environment().get_template(name).render(**kwargs)
     return text.rstrip() if strip else text
+
+
+def bundled_template_defaults() -> dict[str, str]:
+    """Raw bundled text of every agent template, for the operator catalog."""
+    return {
+        str(path.relative_to(_TEMPLATES_ROOT)): path.read_text(encoding="utf-8")
+        for path in sorted(_TEMPLATES_ROOT.rglob("*.md"))
+        if path.is_file()
+    }

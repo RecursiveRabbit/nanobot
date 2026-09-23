@@ -38,7 +38,7 @@ from nanobot.runtime_context import (
 )
 from nanobot.session.history_visibility import is_hidden_history_message
 from nanobot.session.summary import (
-    SUMMARY_CONTINUATION_TEXT,
+    summary_continuation_text,
     SessionSummaryCheckpoint,
 )
 from nanobot.utils.helpers import (
@@ -238,8 +238,8 @@ class ContextGovernor:
                 prepared
                 and injection.get("role") == "user"
                 and prepared[-1].get("role") == "user"
-                and injection.get("content") != SUMMARY_CONTINUATION_TEXT
-                and prepared[-1].get("content") != SUMMARY_CONTINUATION_TEXT
+                and injection.get("content") != summary_continuation_text()
+                and prepared[-1].get("content") != summary_continuation_text()
                 and not is_hidden_history_message(injection)
                 and not is_hidden_history_message(prepared[-1])
                 and allows_conversation_message_merge(injection)
@@ -542,7 +542,7 @@ class ContextGovernor:
                 state.config,
                 [
                     *self._summary_transcript(compaction, summary),
-                    {"role": "user", "content": SUMMARY_CONTINUATION_TEXT},
+                    {"role": "user", "content": summary_continuation_text()},
                     *delta_messages,
                 ],
             )

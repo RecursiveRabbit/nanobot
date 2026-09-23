@@ -12,6 +12,7 @@ import time
 import uuid
 from contextlib import suppress
 from datetime import datetime
+from nanobot.utils.strings import register_literal, text as string_text
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
@@ -361,7 +362,57 @@ _TOOL_RESULT_PREVIEW_CHARS = 1200
 _TOOL_RESULTS_DIR = ".nanobot/tool-results"
 _TOOL_RESULT_RETENTION_SECS = 7 * 24 * 60 * 60
 _TOOL_RESULT_MAX_BUCKETS = 32
-_TRUNCATED_SUFFIX = "\n... (truncated)"
+_TRUNCATED_SUFFIX = register_literal(
+    "literal:truncated_suffix",
+    "\n... (truncated)",
+    group="Turns",
+    advanced=True,
+)
+
+_IMAGE_PLACEHOLDER_DEFAULT = register_literal(
+    "literal:image_placeholder",
+    "[image: {path}]",
+    group="Turns",
+    advanced=True,
+)
+
+_IMAGE_PLACEHOLDER_EMPTY_DEFAULT = register_literal(
+    "literal:image_placeholder_empty",
+    "[image]",
+    group="Turns",
+    advanced=True,
+)
+
+_TOOL_RESULT_PERSISTED_DEFAULT = register_literal(
+    "literal:tool_result_persisted",
+    "[tool output persisted]\n"
+    "Full output saved to workspace path: {path}\n"
+    "Original size: {size} chars\n"
+    "Preview:\n{preview}",
+    group="Turns",
+    advanced=True,
+)
+
+_TOOL_RESULT_PERSISTED_TRUNCATED_PREVIEW_DEFAULT = register_literal(
+    "literal:tool_result_persisted_preview_truncated",
+    "\n...\nPreview is also truncated.",
+    group="Turns",
+    advanced=True,
+)
+
+_TOOL_RESULT_PERSISTED_FOOTER_DEFAULT = register_literal(
+    "literal:tool_result_persisted_footer",
+    "\nResult truncated. Read the saved file if you need the complete output.",
+    group="Turns",
+    advanced=True,
+)
+
+_TOOL_RESULT_OVERFLOW_DEFAULT = register_literal(
+    "literal:tool_result_overflow",
+    "[truncated: {path}]",
+    group="Turns",
+    advanced=True,
+)
 
 
 def safe_filename(name: str) -> str:
@@ -369,9 +420,15 @@ def safe_filename(name: str) -> str:
     return _UNSAFE_CHARS.sub("_", name).strip()
 
 
-def image_placeholder_text(path: str | None, *, empty: str = "[image]") -> str:
+def image_placeholder_text(path: str | None, *, empty: str | None = None) -> str:
     """Build an image placeholder string."""
-    return f"[image: {path}]" if path else empty
+    if path:
+        return string_text("literal:image_placeholder", _IMAGE_PLACEHOLDER_DEFAULT).replace(
+            "{path}", path
+        )
+    if empty is not None:
+        return empty
+    return string_text("literal:image_placeholder_empty", _IMAGE_PLACEHOLDER_EMPTY_DEFAULT)
 
 
 def content_with_media_breadcrumbs(
@@ -396,7 +453,7 @@ def truncate_text(text: str, max_chars: int) -> str:
     """Truncate text with a stable suffix."""
     if max_chars <= 0 or len(text) <= max_chars:
         return text
-    return text[:max_chars] + _TRUNCATED_SUFFIX
+    return text[:max_chars] + string_text("literal:truncated_suffix", _TRUNCATED_SUFFIX)
 
 
 def truncate_text_to_tokens(text: str, max_tokens: int) -> str:
@@ -511,16 +568,23 @@ def _render_tool_result_reference(
     max_chars: int | None = None,
 ) -> str:
     result = (
-        f"[tool output persisted]\n"
-        f"Full output saved to workspace path: {reference_path}\n"
-        f"Original size: {original_size} chars\n"
-        f"Preview:\n{preview}"
+        string_text("literal:tool_result_persisted", _TOOL_RESULT_PERSISTED_DEFAULT)
+        .replace("{path}", reference_path)
+        .replace("{size}", str(original_size))
+        .replace("{preview}", preview)
     )
     if truncated_preview:
-        result += "\n...\nPreview is also truncated."
-    result += "\nResult truncated. Read the saved file if you need the complete output."
+        result += string_text(
+            "literal:tool_result_persisted_preview_truncated",
+            _TOOL_RESULT_PERSISTED_TRUNCATED_PREVIEW_DEFAULT,
+        )
+    result += string_text(
+        "literal:tool_result_persisted_footer", _TOOL_RESULT_PERSISTED_FOOTER_DEFAULT
+    )
     if max_chars and len(result) > max_chars:
-        result = f"[truncated: {reference_path}]"
+        result = string_text("literal:tool_result_overflow", _TOOL_RESULT_OVERFLOW_DEFAULT).replace(
+            "{path}", reference_path
+        )
     return result
 
 
