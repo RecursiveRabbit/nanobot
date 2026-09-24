@@ -710,6 +710,10 @@ class AgentLoop:
             )
             if runtime_context_meta is not None:
                 extra[RUNTIME_CONTEXT_HISTORY_META] = runtime_context_meta
+            if msg.metadata:
+                # Persist channel-provided context (author, guild, reply-to…)
+                # so the transcript — and any reader of it — knows who spoke.
+                extra["message_metadata"] = dict(msg.metadata)
             session.add_message("user", text, **extra)
             self._mark_pending_user_turn(session)
             followup_id = msg.metadata.get(PENDING_FOLLOWUP_ID_KEY)

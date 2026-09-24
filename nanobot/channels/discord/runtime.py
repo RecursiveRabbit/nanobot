@@ -615,8 +615,9 @@ class DiscordChannel(BaseChannel):
             return
 
         media_paths, attachment_markers = await self._download_attachments(message.attachments)
-        full_content = self._compose_inbound_content(content, attachment_markers)
         metadata = self._build_inbound_metadata(message)
+        full_content = (self._format_inbound_header(metadata) + "\n"
+                        + self._compose_inbound_content(content, attachment_markers))
         parent_channel_id = self._channel_parent_key(message.channel)
         session_key = None
         if parent_channel_id is not None:
@@ -768,18 +769,66 @@ class DiscordChannel(BaseChannel):
         return message_type not in {discord.MessageType.default, discord.MessageType.reply}
 
     @staticmethod
-    def _build_inbound_metadata(message: discord.Message) -> dict[str, str | None]:
-        """Build metadata for inbound Discord messages."""
-        reply_to = (
-            str(message.reference.message_id)
-            if message.reference and message.reference.message_id
-            else None
-        )
+    def _build_inbound_metadata(message: discord.Message) -> dict[str, Any]:
+        """Build metadata for inbound Discord messages.
+
+        The agent is a concierge: who is speaking and where is load-bearing
+        context, so capture everything discord.py already has resolved.
+        """
+        author = message.author
+        guild = message.guild
+        channel = message.channel
+        reply_to = None
+        reply_author = None
+        reply_excerpt = None
+        if message.reference and message.reference.message_id:
+            reply_to = str(message.reference.message_id)
+            ref = getattr(message.reference, "resolved", None)
+            if isinstance(ref, discord.Message):
+                reply_author = getattr(ref.author, "display_name", None) or ref.author.name
+                reply_excerpt = (ref.content or "")[:120] or None
+        mentions = [
+            {"id": str(u.id), "name": getattr(u, "display_name", None) or u.name}
+            for u in message.mentions
+        ]
         return {
             "message_id": str(message.id),
-            "guild_id": str(message.guild.id) if message.guild else None,
+            "guild_id": str(guild.id) if guild else None,
+            "guild_name": guild.name if guild else None,
+            "channel_id": str(channel.id),
+            "channel_name": getattr(channel, "name", None) or ("DM" if guild is None else None),
+            "author_id": str(author.id),
+            "author_name": author.name,
+            "author_display_name": getattr(author, "display_name", None) or author.name,
+            "author_bot": bool(getattr(author, "bot", False)),
             "reply_to": reply_to,
+            "reply_to_author": reply_author,
+            "reply_to_excerpt": reply_excerpt,
+            "mentions": mentions or None,
+            "timestamp": message.created_at.isoformat() if message.created_at else None,
         }
+
+    @staticmethod
+    def _format_inbound_header(metadata: dict[str, Any]) -> str:
+        """Render the one-line context header prepended to inbound content."""
+        where = metadata.get("channel_name") or metadata.get("channel_id") or "?"
+        if metadata.get("guild_name"):
+            where = f"{metadata['guild_name']} > #{where}"
+        who = (f"{metadata.get('author_display_name')} (@{metadata.get('author_name')}, "
+               f"{metadata.get('author_id')})")
+        when = str(metadata.get("timestamp") or "")[:19].replace("T", " ")
+        lines = [f"[discord · {where} · {who} · {when} · msg {metadata.get('message_id')}]"]
+        if metadata.get("reply_to"):
+            who_ref = metadata.get("reply_to_author") or f"msg {metadata['reply_to']}"
+            excerpt = metadata.get("reply_to_excerpt")
+            line = f"[replying to {who_ref}"
+            if excerpt:
+                line += f': "{excerpt}"'
+            lines.append(line + "]")
+        if metadata.get("mentions"):
+            names = ", ".join(f"{m['name']} ({m['id']})" for m in metadata["mentions"])
+            lines.append(f"[mentions: {names}]")
+        return "\n".join(lines)
 
     def _should_respond_in_group(self, message: discord.Message, content: str) -> bool:
         """Check if the bot should respond in a guild channel based on policy."""
