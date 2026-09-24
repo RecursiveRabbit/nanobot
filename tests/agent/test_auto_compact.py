@@ -559,7 +559,7 @@ class TestAutoCompactEdgeCases:
 
     @pytest.mark.asyncio
     async def test_auto_compact_with_nothing_summary(self, tmp_path):
-        """The retired "(nothing)" sentinel raw-dumps instead of erasing."""
+        """The retired "(nothing)" sentinel fails the pass; nothing changes."""
         loop = _make_loop(tmp_path, session_ttl_minutes=15)
         session = loop.sessions.get_or_create("cli:test")
         _add_turns(session, 6, prefix="thanks")
@@ -573,12 +573,10 @@ class TestAutoCompactEdgeCases:
         await loop.auto_compact._archive("cli:test", runtime=loop.llm_runtime())
 
         session_after = loop.sessions.get_or_create("cli:test")
-        assert len(session_after.messages) == 13
-        assert len(session_after.get_history(max_messages=12)) == 1
-        summary_text = loop.auto_compact._summaries["cli:test"]["text"]
-        assert summary_text != "(nothing)"
-        assert "thanks" in summary_text
-        assert session_after.metadata["_last_summary"]["text"] == summary_text
+        assert len(session_after.messages) == 12
+        assert session_after.last_archived == 0
+        assert "_last_summary" not in session_after.metadata
+        assert "cli:test" not in loop.auto_compact._summaries
 
         await loop.aclose()
 
@@ -592,12 +590,14 @@ class TestAutoCompactEdgeCases:
 
         loop.provider.chat_stream_with_retry = AsyncMock(side_effect=Exception("API down"))
 
-        # Should not raise
+        # Should not raise — and under the law, nothing happens: no marker,
+        # no watermark, every message intact.
         await loop.auto_compact._archive("cli:test", runtime=loop.llm_runtime())
 
         session_after = loop.sessions.get_or_create("cli:test")
-        assert len(session_after.messages) == 13
-        assert len(session_after.get_history(max_messages=12)) == 1
+        assert len(session_after.messages) == 12
+        assert session_after.last_archived == 0
+        assert "_last_summary" not in session_after.metadata
 
         await loop.aclose()
 

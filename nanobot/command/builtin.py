@@ -358,14 +358,38 @@ async def cmd_compact(ctx: CommandContext) -> None:
             runtime=runtime,
             events=delivery.events,
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("Manual context compaction failed for {}", ctx.key)
-        return
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content=(
+                f"Compaction failed: {exc}. Nothing was changed — the session "
+                "was restored to its pre-compaction state."
+            ),
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
 
     if summary:
         refreshed = loop.sessions.get_or_create(ctx.key)
         refreshed.provider_state = None
         loop.sessions.save(refreshed)
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content="Compaction complete.",
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=(
+            "Compaction could not produce a valid checkpoint (provider or "
+            "validation failure). Nothing was changed — the session is in its "
+            "pre-compaction state."
+        ),
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
 
 
 def _format_preset_names(names: list[str]) -> str:

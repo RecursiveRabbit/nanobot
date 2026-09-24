@@ -430,13 +430,13 @@ class TestEphemeralDirect:
         assert loop.model == "test-model"
         assert loop.model_preset is None
 
-    async def test_ephemeral_skips_raw_archive(self, tmp_path, _make_loop):
-        """When ephemeral=True, raw_archive must not be called."""
+    async def test_ephemeral_persists_nothing(self, tmp_path, _make_loop):
+        """When ephemeral=True, nothing is appended to the history journal."""
         from unittest.mock import patch
 
         loop, store = _make_loop
 
-        with patch.object(loop.context.memory, "raw_archive") as mock_archive:
+        with patch.object(loop.context.memory, "append_history") as mock_archive:
             await loop.process_direct(
                 "test", session_key="dream:test", ephemeral=True,
             )

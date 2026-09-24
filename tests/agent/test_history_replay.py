@@ -100,19 +100,21 @@ async def test_runner_checkpoint_keeps_current_user_as_replay_boundary(tmp_path:
         session.messages.extend(_tool_round(f"older-{index}"))
     session.add_message("assistant", "older final")
 
-    result = await loop._process_message(
-        InboundMessage(
-            channel="cli",
-            sender_id="user",
-            chat_id="test",
-            content="new question",
-        )
-    )
+    from nanobot.agent.context_governance import ContextWindowExceededError
 
-    assert result is not None
-    sent_messages = loop.provider.chat_stream_with_retry.await_args.kwargs["messages"]
-    sent_text = "\n".join(str(message.get("content")) for message in sent_messages)
-    assert "new question" in sent_text
-    assert [message["role"] for message in sent_messages] == ["system", "user", "user"]
-    assert sent_messages[1]["content"] == SUMMARY_CONTINUATION_TEXT
+    with pytest.raises(ContextWindowExceededError):
+        await loop._process_message(
+            InboundMessage(
+                channel="cli",
+                sender_id="user",
+                chat_id="test",
+                content="new question",
+            )
+        )
+
+    # The law (Evans 2026-09-24): the archive pass cannot fit this session's
+    # full context in one provider call (8k window), so the pass fails and the
+    # pressure path raises — it never fabricates, truncates, or deletes.
     assert any(message.get("content") == "long older turn" for message in session.messages)
+    assert any(message.get("content") == "old" for message in session.messages)
+    assert "_last_summary" not in session.metadata

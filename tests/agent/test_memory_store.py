@@ -544,8 +544,11 @@ def test_raw_archive_handles_none_timestamp_and_missing_role(tmp_path: Path) -> 
         {"content": "message with int timestamp", "timestamp": 1720000000, "role": "assistant"},
         {"content": "message with missing role", "timestamp": "2026-07-28T12:00:00"},
     ]
-    memory.raw_archive(messages, session_key="cli:test")
+    # raw_archive is excised (Evans 2026-09-24); the journal accepts plain
+    # entries with odd-shaped messages without crashing.
+    for m in messages:
+        memory.append_history(str(m.get("content", "")), session_key="cli:test")
     raw_history = memory.history_file.read_text(encoding="utf-8")
-    assert "[?] USER: message with none timestamp" in raw_history
-    assert "[1720000000] ASSISTANT: message with int timestamp" in raw_history
-    assert "[2026-07-28T12:00] UNKNOWN: message with missing role" in raw_history
+    assert "message with none timestamp" in raw_history
+    assert "message with int timestamp" in raw_history
+    assert "message with missing role" in raw_history

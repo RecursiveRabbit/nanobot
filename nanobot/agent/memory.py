@@ -31,6 +31,7 @@ from nanobot.utils.gitstore import GitStore
 from nanobot.utils.helpers import (
     content_with_media_breadcrumbs,
     ensure_dir,
+    estimate_message_tokens,
     estimate_prompt_tokens_chain,
     strip_think,
     truncate_text,
@@ -47,24 +48,6 @@ from nanobot.utils.workspace_prompts import (
 
 from nanobot.utils.strings import register_literal, text as string_text
 
-_RAW_CHECKPOINT_HEADER = register_literal(
-    "literal:raw_checkpoint_header",
-    "[RAW] {count} messages\n",
-    group="Compaction",
-    advanced=True,
-)
-_RAW_CHECKPOINT_LINE = register_literal(
-    "literal:raw_checkpoint_line",
-    "[{timestamp}] {role}{tools}: {content}",
-    group="Compaction",
-    advanced=True,
-)
-_RAW_CHECKPOINT_LINE_TOOLS = register_literal(
-    "literal:raw_checkpoint_line_tools",
-    " [tools: {tools}]",
-    group="Compaction",
-    advanced=True,
-)
 _DREAM_HISTORY_HEADER = register_literal(
     "literal:dream_history_header",
     "\n\n## Conversation History\n{history}",
@@ -670,65 +653,6 @@ class MemoryStore:
 
     # -- message formatting utility ------------------------------------------
 
-    @staticmethod
-    def _format_messages(messages: list[dict[str, Any]]) -> str:
-        lines: list[str] = []
-        for message in messages:
-            content = content_with_media_breadcrumbs(
-                message.get("role"),
-                message.get("content", ""),
-                message.get("media"),
-            )
-            if not content:
-                continue
-            tools_used = message.get("tools_used")
-            tools = (
-                string_text("literal:raw_checkpoint_line_tools", _RAW_CHECKPOINT_LINE_TOOLS)
-                .replace("{tools}", ", ".join(cast(list[str], tools_used)))
-                if tools_used
-                else ""
-            )
-            raw_timestamp = message.get("timestamp")
-            timestamp = str(raw_timestamp) if raw_timestamp is not None else "?"
-            role = str(message.get("role") or "unknown")
-            lines.append(
-                string_text("literal:raw_checkpoint_line", _RAW_CHECKPOINT_LINE)
-                .replace("{timestamp}", timestamp[:16])
-                .replace("{role}", role.upper())
-                .replace("{tools}", tools)
-                .replace("{content}", content)
-            )
-        return "\n".join(lines)
-
-    def raw_archive(
-        self,
-        messages: list[dict[str, Any]],
-        *,
-        max_chars: int | None = None,
-        session_key: str | None = None,
-    ) -> str:
-        """Persist and return a bounded raw checkpoint when summarization degrades."""
-        checkpoint = self._build_raw_checkpoint(messages, max_chars=max_chars)
-        self.append_history(checkpoint, session_key=session_key)
-        logger.warning(
-            "Memory consolidation degraded: raw-archived {} messages", len(messages)
-        )
-        return checkpoint
-
-    def _build_raw_checkpoint(
-        self,
-        messages: list[dict[str, Any]],
-        *,
-        max_chars: int | None = None,
-    ) -> str:
-        """Build the same bounded checkpoint as :meth:`raw_archive` without writing it."""
-        limit = max_chars if max_chars is not None else _RAW_ARCHIVE_MAX_CHARS
-        checkpoint = (
-            string_text("literal:raw_checkpoint_header", _RAW_CHECKPOINT_HEADER)
-            .replace("{count}", str(len(messages)))
-            + self._format_messages(public_history_messages(messages))
-        )
-        return self._normalize_history_entry(checkpoint, max_chars=limit)
 
     # ------------------------------------------------------------------
     # Dream helpers
@@ -783,10 +707,9 @@ class MemoryStore:
 # Memory ingestion and context-pressure coordination
 # ---------------------------------------------------------------------------
 
-# Raw fallbacks use a tighter cap. Completed model summaries may scale with the
-# configured generation budget, while append_history() still enforces the
-# emergency hard cap against pathological provider output.
-_RAW_ARCHIVE_MAX_CHARS = 16_000   # fallback dump (LLM failed)
+# Completed model summaries may scale with the configured generation budget,
+# while append_history() still enforces the emergency hard cap against
+# pathological provider output.
 _HISTORY_ENTRY_HARD_CAP = 64_000  # emergency cap in append_history
 
 
@@ -810,53 +733,6 @@ class MemoryArchiver:
         self._get_tool_definitions = get_tool_definitions
         self._resolve_prompt_context = resolve_prompt_context
 
-    def _raw_checkpoint(
-        self,
-        messages: list[dict[str, Any]],
-        *,
-        session_key: str,
-        previous_summary: str | None,
-        max_tokens: int,
-    ) -> str:
-        """Persist the failed chunk and return a bounded replacement checkpoint."""
-        raw = self.store.raw_archive(messages, session_key=session_key)
-        return self._combine_raw_checkpoint(
-            raw,
-            previous_summary=previous_summary,
-            max_tokens=max_tokens,
-        )
-
-    @staticmethod
-    def _combine_raw_checkpoint(
-        raw: str,
-        *,
-        previous_summary: str | None,
-        max_tokens: int,
-    ) -> str:
-        """Return a bounded checkpoint that preserves prior and newly archived context."""
-        token_limit = max(1, max_tokens)
-        if not previous_summary:
-            return truncate_text_to_tokens(raw, token_limit)
-
-        combined = (
-            "[Previous archived context]\n"
-            f"{previous_summary}\n\n"
-            "[Newly archived raw context]\n"
-            f"{raw}"
-        )
-        bounded = truncate_text_to_tokens(combined, token_limit)
-        if bounded == combined:
-            return combined
-
-        # Keep evidence from both sides when their full concatenation cannot fit.
-        section_limit = max(1, (token_limit - 32) // 2)
-        return truncate_text_to_tokens(
-            "[Previous archived context]\n"
-            f"{truncate_text_to_tokens(previous_summary, section_limit)}\n\n"
-            "[Newly archived raw context]\n"
-            f"{truncate_text_to_tokens(raw, section_limit)}",
-            token_limit,
-        )
 
     async def archive(
         self,
@@ -875,18 +751,6 @@ class MemoryArchiver:
         if not source_messages:
             return None
 
-        def raw_fallback() -> str:
-            return self._raw_checkpoint(
-                source_messages,
-                session_key=session_key,
-                previous_summary=previous_summary,
-                max_tokens=(
-                    fallback_max_tokens
-                    if fallback_max_tokens is not None
-                    else runtime.generation.max_tokens
-                ),
-            )
-
         prompt = render_template(
             "agent/consolidator_archive.md",
             strip=True,
@@ -900,7 +764,11 @@ class MemoryArchiver:
                 provider_state,
                 runtime.model,
             ):
-                return raw_fallback()
+                logger.warning(
+                    "Memory archive cannot resume provider state for {}; failing the pass",
+                    session_key,
+                )
+                return None
             instruction_messages: list[dict[str, Any]] = []
             for message in history:
                 if message.get("role") not in {"system", "developer"}:
@@ -929,14 +797,14 @@ class MemoryArchiver:
                 call_tools,
             )
             if input_token_budget <= 0 or estimated > input_token_budget:
-                logger.debug(
-                    "Memory archive input does not fit for {}: {}/{} via {}; raw-dumping",
+                logger.warning(
+                    "Memory archive input does not fit for {}: {}/{} via {}; failing the pass",
                     session_key,
                     estimated,
                     input_token_budget,
                     source,
                 )
-                return raw_fallback()
+                return None
 
         try:
             with llm_usage_source("dream"):
@@ -950,33 +818,38 @@ class MemoryArchiver:
                     provider_context=provider_context,
                 )
         except Exception:
-            logger.warning("Memory archive provider call failed, raw-dumping to history")
-            return raw_fallback()
+            logger.warning("Memory archive provider call failed; failing the pass")
+            return None
         if response.finish_reason in {"error", "length"}:
             logger.warning(
-                "Memory archive provider did not complete ({}), raw-dumping to history",
+                "Memory archive provider did not complete ({}); failing the pass",
                 response.finish_reason,
             )
-            return raw_fallback()
+            return None
         if response.has_tool_calls is True:
-            logger.warning("Memory archive provider returned tool calls, raw-dumping to history")
-            return raw_fallback()
+            logger.warning("Memory archive provider returned tool calls; failing the pass")
+            return None
         summary = response.content
         if not summary or not summary.strip():
-            logger.warning("Memory archive provider returned no summary, raw-dumping to history")
-            return raw_fallback()
+            logger.warning("Memory archive provider returned no summary; failing the pass")
+            return None
         if summary.strip() == "(nothing)":
             # The retired archive contract offered "(nothing)" as a sanctioned
-            # response — total amnesia on demand.  The resident-notes pass does
-            # not; treat the sentinel as a failed pass and keep the raw context.
-            logger.warning("Memory archive provider returned retired (nothing) sentinel, raw-dumping")
-            return raw_fallback()
-        summary = self.store._normalize_history_entry(summary)
+            # response — total amnesia on demand. Treat it as a failed pass.
+            logger.warning("Memory archive provider returned retired (nothing) sentinel; failing the pass")
+            return None
+        summary = strip_think(summary).strip()
         if not summary:
-            logger.warning("Memory archive provider summary was not safe to replay, raw-dumping")
-            return raw_fallback()
-        if summary != "(nothing)":
-            self.store.append_history(summary, session_key=session_key)
+            logger.warning("Memory archive summary empty after normalization; failing the pass")
+            return None
+        if len(summary) > _HISTORY_ENTRY_HARD_CAP:
+            logger.warning(
+                "Memory archive summary exceeds the journal cap ({} > {}); failing the pass — never truncate",
+                len(summary),
+                _HISTORY_ENTRY_HARD_CAP,
+            )
+            return None
+        self.store.append_history(summary, session_key=session_key)
         return summary
 
     async def archive_session(
@@ -1001,16 +874,11 @@ class MemoryArchiver:
         previous_summary = session_summary["text"] if session_summary else None
 
         if input_token_budget <= 0:
-            logger.debug(
-                "Memory archive has no safe input budget for {}; raw-dumping",
+            logger.warning(
+                "Memory archive has no safe input budget for {}; failing the pass",
                 session.key,
             )
-            return self._raw_checkpoint(
-                messages,
-                session_key=session.key,
-                previous_summary=previous_summary,
-                max_tokens=runtime.generation.max_tokens,
-            )
+            return None
         prefix = Session(
             key=session.key,
             messages=list(session.messages[:archive_end]),
@@ -1022,16 +890,11 @@ class MemoryArchiver:
             messages=messages,
         ).get_history()
         if not archive_history or history[-len(archive_history):] != archive_history:
-            logger.debug(
-                "Memory archive cannot replay the full chunk for {}; raw-dumping",
+            logger.warning(
+                "Memory archive cannot replay the full chunk for {}; failing the pass",
                 session.key,
             )
-            return self._raw_checkpoint(
-                messages,
-                session_key=session.key,
-                previous_summary=previous_summary,
-                max_tokens=runtime.generation.max_tokens,
-            )
+            return None
         channel = session.key.split(":", 1)[0] if ":" in session.key else None
         workspace: Path | None = None
         if self._resolve_prompt_context is not None:
@@ -1125,7 +988,15 @@ class Consolidator:
         )
         if summary is None:
             return None
-        return truncate_text_to_tokens(summary, max(1, max_output_tokens))
+        estimated = estimate_message_tokens({"role": "assistant", "content": summary})
+        if estimated > max(1, max_output_tokens):
+            logger.warning(
+                "Memory archive summary exceeds the output budget ({} > {} tokens); failing the pass — never truncate",
+                estimated,
+                max_output_tokens,
+            )
+            return None
+        return summary
 
     async def summarize_provider_compaction(
         self,
@@ -1238,6 +1109,32 @@ class Consolidator:
             )
             last_active = session.updated_at
             archive_end = archive_start + len(messages_to_archive)
+
+            # Pre-flight: prove restorability before the pass may run. The law
+            # (Evans 2026-09-24): a valid compressed context commits, or
+            # NOTHING happens and the error is reported. No restore guarantee,
+            # no compaction.
+            session_path = self.sessions._get_session_path(session_key)
+            backup_bytes: bytes | None = None
+            try:
+                self.sessions.save(session)
+                backup_bytes = session_path.read_bytes()
+                backup_path = session_path.parent / (
+                    session_path.name + f".pre-compact-{datetime.now():%Y%m%d}.bak"
+                )
+                backup_path.write_bytes(backup_bytes)
+                if backup_path.read_bytes() != backup_bytes:
+                    raise OSError("backup verification failed")
+            except Exception:
+                logger.exception(
+                    "Compaction pre-flight could not guarantee restorability for {}; refusing",
+                    session_key,
+                )
+                await events.emit(
+                    ContextCompactionEvent(compaction_id=compaction_id, phase="failed"),
+                )
+                return None
+
             try:
                 summary = await self.archive_session(
                     session, archive_end=archive_end, runtime=runtime,
@@ -1251,6 +1148,19 @@ class Consolidator:
                     session.provider_state = None
                     self.sessions.save(session)
             except (Exception, asyncio.CancelledError) as exc:
+                if backup_bytes is not None:
+                    try:
+                        session_path.write_bytes(backup_bytes)
+                        self.sessions.invalidate(session_key)
+                        logger.warning(
+                            "Compaction failed for {}; restored the pre-compaction state",
+                            session_key,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Compaction restore failed for {} — MANUAL INTERVENTION",
+                            session_key,
+                        )
                 await events.emit(
                     ContextCompactionEvent(
                         compaction_id=compaction_id,
