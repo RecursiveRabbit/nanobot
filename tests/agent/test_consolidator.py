@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nanobot.agent.memory import (
-    _HISTORY_ENTRY_HARD_CAP,
     Consolidator,
     MemoryStore,
 )
@@ -1360,13 +1359,14 @@ class TestArchivePersistence:
         assert summary is not None
         assert summary == persisted == "safe summary"
 
-    async def test_oversized_summary_fails_never_truncates(
+    async def test_oversized_summary_persists_in_full(
         self, consolidator, mock_provider, store, runtime
     ):
-        """A pathologically large LLM summary fails the pass. Evans 2026-09-24:
-        never truncate — an oversize entry is an error, not a crop."""
+        """Evans 2026-09-24: no cap, no size-as-failure-metric. A complete
+        summary persists whole, however long — the journal takes it."""
+        big = "S" * 128_000
         mock_provider.chat_stream_with_retry.return_value = MagicMock(
-            content="S" * (_HISTORY_ENTRY_HARD_CAP * 2),
+            content=big,
             finish_reason="stop",
         )
         summary = await _archive(
@@ -1375,5 +1375,6 @@ class TestArchivePersistence:
             runtime,
         )
 
-        assert summary is None
-        assert len(store.read_unprocessed_history(since_cursor=0)) == 0
+        assert summary == big
+        entry = store.read_unprocessed_history(since_cursor=0)[0]
+        assert entry["content"] == big

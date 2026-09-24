@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.agent.memory import _HISTORY_ENTRY_HARD_CAP, MemoryStore
+from nanobot.agent.memory import MemoryStore
 
 
 @pytest.fixture
@@ -248,41 +248,34 @@ class TestHistoryWithCursor:
         assert store.history_file.exists()
 
 
-class TestAppendHistoryHardCap:
-    """append_history has a defensive cap that catches new callers who forgot
-    to set their own tighter cap. The default is intentionally larger than
-    any current caller's per-call cap, so normal operation never trips it."""
+class TestAppendHistoryNoCap:
+    """Evans 2026-09-24: never truncate. The journal has no size cap —
+    length is not a validity signal. (The defensive hard cap was struck
+    along with the raw-dump machinery it defended.)"""
 
-    def test_oversized_entry_is_truncated(self, store):
-        """An entry above _HISTORY_ENTRY_HARD_CAP is truncated before being persisted."""
-        huge = "x" * (_HISTORY_ENTRY_HARD_CAP + 10_000)
+    def test_oversized_entry_persists_in_full(self, store):
+        huge = "x" * 74_000
         store.append_history(huge)
         entry = store.read_unprocessed_history(since_cursor=0)[0]
-        assert len(entry["content"]) <= _HISTORY_ENTRY_HARD_CAP + 50
+        assert entry["content"] == huge
 
-    def test_oversize_warning_is_emitted_once(self, store, monkeypatch):
-        """Repeated oversized writes should warn only on the first occurrence."""
+    def test_no_truncation_warning_exists(self, store, monkeypatch):
         records: list[str] = []
         monkeypatch.setattr(
             "nanobot.agent.memory.logger.warning",
             lambda message, *args: records.append(message.format(*args)),
         )
-        huge = "x" * (_HISTORY_ENTRY_HARD_CAP + 1)
-        store.append_history(huge)
-        store.append_history(huge)
-        store.append_history(huge)
+        store.append_history("x" * 70_000)
+        store.append_history("x" * 70_000)
+        assert not [r for r in records if "exceeds" in r and "chars" in r]
 
-        oversize_warnings = [r for r in records if "exceeds" in r and "chars" in r]
-        assert len(oversize_warnings) == 1
-
-    def test_custom_max_chars_overrides_default(self, store):
-        """Callers that pass max_chars should get their tighter cap applied."""
+    def test_max_chars_param_is_inert(self, store):
+        """The retired max_chars parameter is accepted but ignored."""
         store.append_history("a" * 500, max_chars=100)
         entry = store.read_unprocessed_history(since_cursor=0)[0]
-        assert len(entry["content"]) <= 150  # 100 + "\n... (truncated)"
+        assert len(entry["content"]) == 500
 
     def test_normal_sized_entries_unaffected(self, store):
-        """The hard cap must not alter entries that fit within it."""
         msg = "normal short entry"
         store.append_history(msg)
         entry = store.read_unprocessed_history(since_cursor=0)[0]

@@ -31,7 +31,6 @@ from nanobot.utils.gitstore import GitStore
 from nanobot.utils.helpers import (
     content_with_media_breadcrumbs,
     ensure_dir,
-    estimate_message_tokens,
     estimate_prompt_tokens_chain,
     strip_think,
     truncate_text,
@@ -92,7 +91,6 @@ class MemoryStore:
         self._dream_cursor_file = self.memory_dir / ".dream_cursor"
         self._corruption_logged = False  # rate-limit invalid cursor warning
         self._malformed_entry_logged = False  # rate-limit bad history shape warning
-        self._oversize_logged = False  # rate-limit oversized-entry warning
         self._dream_prompt_oversize_logged = False
         self._append_lock = threading.Lock()  # serialize cursor allocation + append
         self._git = GitStore(workspace, tracked_files=[
@@ -272,22 +270,14 @@ class MemoryStore:
         *,
         max_chars: int | None = None,
     ) -> str:
-        """Return the exact bounded, model-safe text accepted by the journal."""
-        limit = max_chars if max_chars is not None else _HISTORY_ENTRY_HARD_CAP
-        raw = entry.rstrip()
-        content = strip_think(raw)
-        if len(content) > limit:
-            if not self._oversize_logged:
-                self._oversize_logged = True
-                logger.warning(
-                    "history entry exceeds {} chars ({}); truncating. "
-                    "Usually means a caller forgot its own cap; "
-                    "further occurrences suppressed.",
-                    limit,
-                    len(content),
-                )
-            content = truncate_text(content, limit)
-        return content
+        """Return the model-safe text accepted by the journal.
+
+        Evans, 2026-09-24: never truncate. There is no size cap — length is
+        not a validity signal ("if you're using response size as a metric to
+        try and detect failure, you're not tracking what you say you're
+        tracking"). The max_chars parameter is retired and ignored.
+        """
+        return strip_think(entry.rstrip())
 
     def append_history(
         self,
@@ -305,10 +295,8 @@ class MemoryStore:
         to the raw leak — otherwise `strip_think`'s guarantees would be
         undone when Dream consumes the journal entry.
 
-        A defensive cap (*max_chars*, default ``_HISTORY_ENTRY_HARD_CAP``) is
-        applied as a final safety net: individual callers should cap their own
-        content more tightly; this default only exists to catch unintentional
-        large writes (e.g. an LLM echoing its input back as a "summary").
+        No length cap. Evans, 2026-09-24: an agent may return its whole
+        context as a summary if it chooses; nothing here measures size.
         """
         ts = datetime.now().strftime("%Y-%m-%d %H:%M")
         raw = entry.rstrip()
@@ -707,10 +695,7 @@ class MemoryStore:
 # Memory ingestion and context-pressure coordination
 # ---------------------------------------------------------------------------
 
-# Completed model summaries may scale with the configured generation budget,
-# while append_history() still enforces the emergency hard cap against
-# pathological provider output.
-_HISTORY_ENTRY_HARD_CAP = 64_000  # emergency cap in append_history
+
 
 
 class MemoryArchiver:
@@ -841,13 +826,6 @@ class MemoryArchiver:
         summary = strip_think(summary).strip()
         if not summary:
             logger.warning("Memory archive summary empty after normalization; failing the pass")
-            return None
-        if len(summary) > _HISTORY_ENTRY_HARD_CAP:
-            logger.warning(
-                "Memory archive summary exceeds the journal cap ({} > {}); failing the pass — never truncate",
-                len(summary),
-                _HISTORY_ENTRY_HARD_CAP,
-            )
             return None
         self.store.append_history(summary, session_key=session_key)
         return summary
@@ -987,14 +965,6 @@ class Consolidator:
             provider_state=provider_state,
         )
         if summary is None:
-            return None
-        estimated = estimate_message_tokens({"role": "assistant", "content": summary})
-        if estimated > max(1, max_output_tokens):
-            logger.warning(
-                "Memory archive summary exceeds the output budget ({} > {} tokens); failing the pass — never truncate",
-                estimated,
-                max_output_tokens,
-            )
             return None
         return summary
 

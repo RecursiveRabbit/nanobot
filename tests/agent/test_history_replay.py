@@ -102,7 +102,7 @@ async def test_runner_checkpoint_keeps_current_user_as_replay_boundary(tmp_path:
 
     from nanobot.agent.context_governance import ContextWindowExceededError
 
-    with pytest.raises(ContextWindowExceededError):
+    with pytest.raises(ContextWindowExceededError):  # noqa: PT012 — the law's path
         await loop._process_message(
             InboundMessage(
                 channel="cli",

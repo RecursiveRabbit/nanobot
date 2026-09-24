@@ -64,6 +64,7 @@ from nanobot.providers.base import LLMProvider, LLMUsage, ProviderConversationSt
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_HISTORY_META,
+    RUNTIME_CONTEXT_INPUT_META,
     RUNTIME_CONTEXT_MESSAGE_META,
     RuntimeContextBlock,
     RuntimeContextProvider,
@@ -713,7 +714,13 @@ class AgentLoop:
             if msg.metadata:
                 # Persist channel-provided context (author, guild, reply-to…)
                 # so the transcript — and any reader of it — knows who spoke.
-                extra["message_metadata"] = dict(msg.metadata)
+                # Runtime-context block OBJECTS are not serializable; their
+                # rendered form is already persisted via runtime_context_meta.
+                extra["message_metadata"] = {
+                    k: v
+                    for k, v in dict(msg.metadata).items()
+                    if k != RUNTIME_CONTEXT_INPUT_META
+                }
             session.add_message("user", text, **extra)
             self._mark_pending_user_turn(session)
             followup_id = msg.metadata.get(PENDING_FOLLOWUP_ID_KEY)
