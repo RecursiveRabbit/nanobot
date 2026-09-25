@@ -272,8 +272,10 @@ def test_onboard_fresh_install(mock_paths):
     assert "Created workspace" in result.stdout
     assert "nanobot is ready" in result.stdout
     assert config_file.exists()
-    assert (workspace_dir / "AGENTS.md").exists()
-    assert (workspace_dir / "memory" / "MEMORY.md").exists()
+    # Evans' 2026-09-17 directive: onboard creates config + workspace dir,
+    # never harness profile files.
+    assert not (workspace_dir / "AGENTS.md").exists()
+    assert not (workspace_dir / "memory" / "MEMORY.md").exists()
     expected_workspace = Config().workspace_path
     assert mock_ws.call_args.args == (expected_workspace,)
 
@@ -297,7 +299,7 @@ def test_onboard_existing_config_refresh(mock_paths):
     assert "Config already exists" in result.stdout
     assert "existing values preserved" in result.stdout
     assert workspace_dir.exists()
-    assert (workspace_dir / "AGENTS.md").exists()
+    assert not (workspace_dir / "AGENTS.md").exists()
 
 
 def test_onboard_existing_config_refresh_non_interactive(mock_paths):
@@ -311,7 +313,7 @@ def test_onboard_existing_config_refresh_non_interactive(mock_paths):
     assert "Config already exists" not in result.stdout
     assert "existing values preserved" in result.stdout
     assert workspace_dir.exists()
-    assert (workspace_dir / "AGENTS.md").exists()
+    assert not (workspace_dir / "AGENTS.md").exists()
 
 
 def test_onboard_existing_config_overwrite(mock_paths):
@@ -328,7 +330,8 @@ def test_onboard_existing_config_overwrite(mock_paths):
 
 
 def test_onboard_existing_workspace_safe_create(mock_paths):
-    """Workspace exists — should not recreate, but still add missing templates."""
+    """Workspace exists — should not recreate it, and (Evans 2026-09-17)
+    must not add harness profile files either."""
     config_file, workspace_dir, _ = mock_paths
     workspace_dir.mkdir(parents=True)
     config_file.write_text("{}")
@@ -337,8 +340,8 @@ def test_onboard_existing_workspace_safe_create(mock_paths):
 
     assert result.exit_code == 0
     assert "Created workspace" not in result.stdout
-    assert "Created AGENTS.md" in result.stdout
-    assert (workspace_dir / "AGENTS.md").exists()
+    assert "Created AGENTS.md" not in result.stdout
+    assert not (workspace_dir / "AGENTS.md").exists()
 
 
 def _strip_ansi(text):
@@ -426,7 +429,7 @@ def test_onboard_uses_explicit_config_and_workspace_paths(tmp_path, monkeypatch)
     assert result.exit_code == 0
     saved = Config.model_validate(json.loads(config_path.read_text(encoding="utf-8")))
     assert saved.workspace_path == workspace_path
-    assert (workspace_path / "AGENTS.md").exists()
+    assert not (workspace_path / "AGENTS.md").exists()  # Evans 2026-09-17
     stripped_output = _strip_ansi(result.stdout)
     compact_output = stripped_output.replace("\n", "")
     resolved_config = str(config_path.resolve())
