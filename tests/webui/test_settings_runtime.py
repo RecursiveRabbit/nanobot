@@ -60,8 +60,6 @@ def test_runtime_patch_persists_and_preserves_other_domains(tmp_path):
     {"tools.exec.deny_patterns": ["["]},
     {"tools.ssrf_whitelist": ["not-a-network"]},
     {"tools.exec.sandbox": "unknown"},
-    {"agents.defaults.dream.cron": "not a cron"},
-    {"agents.defaults.dream.model_override": "missing"},
     {"agents.defaults.timezone_mode": "manual", "agents.defaults.timezone": "Mars/Olympus"},
     {"gateway.port": 65536},
     {"gateway.heartbeat.interval_s": 0},
@@ -98,14 +96,13 @@ def test_remote_client_cannot_change_install_policy():
 
 def test_timezone_auto_and_nullable_fields():
     config = Config.model_validate({"agents": {"defaults": {
-        "timezoneMode": "manual", "timezone": "UTC", "dream": {"cron": "0 2 * * *"},
+        "timezoneMode": "manual", "timezone": "UTC",
     }}})
     assert update_runtime_config(config, {
         "agents.defaults.timezone_mode": "auto",
         "tools.web.proxy": None,
     }, local_browser=True)
     assert config.agents.defaults.timezone_mode == "auto"
-    assert config.agents.defaults.dream.cron == "0 2 * * *"
     assert not update_runtime_config(config, {}, local_browser=True)
 
 
@@ -125,12 +122,12 @@ def test_every_exposed_runtime_setting_has_a_frontend_use():
     assert set(paths) | visibility_only == set(RUNTIME_CONFIG_PATHS)
 
 
-def test_disabling_memory_consolidation_preserves_other_memory_settings():
+def test_runtime_switch_preserves_other_default_settings():
     config = Config()
     before = config.agents.defaults.model_dump()
-    assert update_runtime_config(config, {"agents.defaults.dream.enabled": False}, local_browser=True)
+    assert update_runtime_config(config, {"agents.defaults.max_tool_iterations": 99}, local_browser=True)
     after = config.agents.defaults.model_dump()
-    before["dream"]["enabled"] = False
+    before["max_tool_iterations"] = 99
     assert after == before
 
 

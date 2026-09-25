@@ -145,7 +145,7 @@ async def test_silent_stream_rejects_eof_without_completion(make_provider, api, 
 
 
 @pytest.mark.parametrize("api", ["chat", "responses", "azure"])
-async def test_archive_preserves_raw_history_after_truncated_stream_retries(
+async def test_archive_fails_clean_after_truncated_stream_retries(
     make_provider, tmp_path, api,
 ):
     provider, stream = await make_provider(api, "content")
@@ -169,10 +169,10 @@ async def test_archive_preserves_raw_history_after_truncated_stream_retries(
 
     assert len(calls) == 2
     assert all(call.finish_reason == "error" and call.error_kind == "connection" for call in calls)
-    assert summary is not None and "[RAW]" in summary and "PRESERVE_AUDIT_LOGS" in summary
-    entries = store.read_unprocessed_history(since_cursor=0)
-    assert len(entries) == 1
-    assert entries[0]["content"] == summary
+    # The law (Evans 2026-09-24): a failed pass writes nothing. No raw dump,
+    # no partial summary — the journal stays exactly as it was.
+    assert summary is None
+    assert store.read_unprocessed_history(since_cursor=0) == []
     assert stream.closed
 
 

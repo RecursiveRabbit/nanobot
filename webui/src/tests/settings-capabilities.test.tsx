@@ -26,31 +26,29 @@ describe("Settings capabilities", () => {
   });
 
   it("keeps other capability switches stable while saving and queues their edits", async () => {
-    const payload = { ...settingsPayload(), runtime_config: {
-      "tools.web.enable": true, "agents.defaults.dream.enabled": true,
-    } };
-    const memorySaved = { ...payload, runtime_config: { ...payload.runtime_config, "agents.defaults.dream.enabled": false } };
-    let finishMemory!: (value: SettingsPayload) => void;
-    requestMutationMock.mockImplementationOnce(() => new Promise<SettingsPayload>((resolve) => { finishMemory = resolve; }))
-      .mockResolvedValueOnce({ ...memorySaved, runtime_config: { ...memorySaved.runtime_config, "tools.web.enable": false } });
+    const payload = settingsPayload();
+    payload.image_generation.providers = [{ name: "openrouter", label: "OpenRouter", configured: true }];
+    payload.runtime_config = { "tools.web.enable": true };
+    const webSaved = { ...payload, runtime_config: { ...payload.runtime_config, "tools.web.enable": false } };
+    let finishWeb!: (value: SettingsPayload) => void;
+    requestMutationMock.mockImplementationOnce(() => new Promise<SettingsPayload>((resolve) => { finishWeb = resolve; }))
+      .mockResolvedValueOnce({ ...webSaved, image_generation: { ...webSaved.image_generation, enabled: true } });
     renderSettingsView({ initialSection: "capabilities", initialSettings: payload });
-    const memory = screen.getByRole("switch", { name: "Memory consolidation" });
     const web = screen.getByRole("switch", { name: "Web access" });
-    const webStyle = web.className;
-    fireEvent.click(memory);
-    await waitFor(() => expect(memory).toBeDisabled());
-    expect(web).toBeEnabled();
-    expect(web).toBeChecked();
-    expect(web.className).toBe(webStyle);
+    const image = screen.getByRole("switch", { name: "Image generation" });
+    const imageStyle = image.className;
     fireEvent.click(web);
-    expect(web).not.toBeChecked();
-    await act(async () => finishMemory(memorySaved));
+    await waitFor(() => expect(web).toBeDisabled());
+    expect(image).toBeEnabled();
+    expect(image.className).toBe(imageStyle);
+    fireEvent.click(image);
+    await act(async () => finishWeb(webSaved));
     await waitFor(() => expect(requestMutationMock).toHaveBeenLastCalledWith(
-      "settings.runtime_config.update", { values: { "tools.web.enable": false } }, 20_000,
+      "settings.image_generation.update", expect.objectContaining({ enabled: true }), 20_000,
     ));
     await waitFor(() => expect(web).toBeEnabled());
-    expect(memory).not.toBeChecked();
     expect(web).not.toBeChecked();
+    expect(image).toBeChecked();
   });
 
   it("keeps missing image credentials local and does not submit an invalid draft", async () => {
@@ -80,9 +78,9 @@ describe("Settings capabilities", () => {
     const payload = settingsPayload();
     payload.image_generation.enabled = true;
     payload.image_generation.providers = [{ name: "openrouter", label: "OpenRouter", configured: true }];
-    payload.runtime_config = { "tools.web.enable": true, "agents.defaults.dream.enabled": true };
+    payload.runtime_config = { "tools.web.enable": true };
     renderSettingsView({ initialSection: "capabilities", initialSettings: payload });
-    expect(screen.getAllByRole("switch")).toHaveLength(4);
+    expect(screen.getAllByRole("switch")).toHaveLength(3);
     expect(screen.getByRole("button", { name: "Capabilities", exact: true })).toHaveAttribute("aria-current", "page");
     const editor = screen.getByRole("button", { name: "Image generation", exact: true });
     expect(editor).toHaveAttribute("aria-expanded", "false");

@@ -82,11 +82,11 @@ def test_catalog_groups_and_marks_overrides() -> None:
     try:
         strings.set_overrides({"literal:runtime_context_tag": "[ctx]"})
         entries = strings.catalog(
-            template_defaults={"agent/identity.md": "id", "agent/dream.md": "dream"}
+            template_defaults={"agent/identity.md": "id", "agent/subagent_system.md": "sub"}
         )
         by_key = {e["key"]: e for e in entries}
-        assert by_key["template:agent/dream.md"]["group"] == "Memory pipeline"
-        assert by_key["template:agent/dream.md"]["advanced"] is True
+        assert by_key["template:agent/subagent_system.md"]["group"] == "Goals & subagents"
+        assert by_key["template:agent/subagent_system.md"]["advanced"] is True
         assert by_key["tool:dummy:description"]["advanced"] is True
         assert by_key["tool:dummy:param:path"]["default"] == "Original path param."
         lit = by_key["literal:runtime_context_tag"]
