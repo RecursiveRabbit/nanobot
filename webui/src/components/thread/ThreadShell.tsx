@@ -1361,6 +1361,9 @@ export function ThreadShell({
   }, [chatId, historical, setMessages]);
 
   const [draftText, setDraftText] = useState("");
+  // Channel sessions (discord, cli, cron, …) are visible but read-only here;
+  // sending would route into the live channel.
+  const isChannelSession = historyKey !== null && !historyKey.startsWith("websocket:");
 
   useEffect(() => {
     setDraftText("");
@@ -1595,15 +1598,19 @@ export function ThreadShell({
       {session ? (
         <ThreadComposer
           onSend={handleThreadSend}
-          disabled={!chatId}
+          disabled={!chatId || isChannelSession}
           draftKey={historyKey ?? "new"}
           onDraftChange={setDraftText}
           inputAriaLabel={composerInputAriaLabel}
           isStreaming={turnActive}
           placeholder={
-            composerVariant === "hero"
-              ? t("thread.composer.placeholderHero")
-              : t("thread.composer.placeholderThread")
+            isChannelSession
+              ? t("thread.composer.channelReadonly", {
+                  channel: historyKey?.split(":")[0] ?? "",
+                })
+              : composerVariant === "hero"
+                ? t("thread.composer.placeholderHero")
+                : t("thread.composer.placeholderThread")
           }
           modelLabel={modelBadgeLabel}
           modelDetail={modelBadge.model}

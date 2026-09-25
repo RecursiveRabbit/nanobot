@@ -1361,6 +1361,7 @@
       }
     },
     "composer": {
+      "channelReadonly": "This is a {{channel}} session — read-only here; replies happen in {{channel}}.",
       "placeholderThread": "Saisissez votre message…",
       "placeholderHero": "Qu’avez-vous en tête ?",
       "placeholderOpening": "Ouverture d’un nouveau sujet…",

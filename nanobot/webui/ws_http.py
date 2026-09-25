@@ -105,6 +105,8 @@ from nanobot.webui.session_automations import (
 )
 from nanobot.utils import strings
 from nanobot.utils.prompt_templates import bundled_template_defaults
+from datetime import datetime
+
 from nanobot.webui.assembled_context import assembled_context_payload
 from nanobot.webui.session_context import session_context_payload
 from nanobot.webui.session_identity import is_webui_session_key
@@ -800,7 +802,7 @@ class GatewayHTTPHandler:
         default_scope: WorkspaceScope | None = None
         for s in sessions:
             key = s.get("key")
-            if not (isinstance(key, str) and is_webui_session_key(key)):
+            if not isinstance(key, str) or not key:
                 continue
             row = {
                 k: v
@@ -830,6 +832,63 @@ class GatewayHTTPHandler:
             cleaned.append(row)
         return {"sessions": cleaned}
 
+    def _handle_channel_session_thread(self, request: WsRequest, key: str) -> Response:
+        """Transcript view for non-websocket (channel) sessions: the session file.
+
+        The operator's window shows every session, every channel. Channel
+        sessions have no WebUI display thread; their session log IS the
+        transcript. Read-only — the composer stays disabled for these.
+        """
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        if self.session_manager is None:
+            return _http_error(503, "session manager unavailable")
+        session_data = self.session_manager.read_session_file(key)
+        raw_messages = session_data.get("messages") if isinstance(session_data, dict) else None
+        if not isinstance(raw_messages, list):
+            return _http_error(404, "session not found")
+
+        from nanobot.session.history_visibility import is_hidden_history_message
+
+        messages = []
+        for index, raw in enumerate(raw_messages):
+            if not isinstance(raw, dict):
+                continue
+            if raw.get("_command") or is_hidden_history_message(raw):
+                continue
+            if raw.get("_type"):
+                continue
+            role = raw.get("role")
+            if role not in {"user", "assistant", "tool", "system"}:
+                continue
+            content = raw.get("content")
+            if isinstance(content, list):
+                content = "\n".join(
+                    str(block.get("text", ""))
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                )
+            if content is None:
+                content = ""
+            timestamp = raw.get("timestamp")
+            try:
+                created_at = int(datetime.fromisoformat(str(timestamp)).timestamp() * 1000)
+            except (TypeError, ValueError):
+                created_at = 0
+            messages.append({
+                "id": f"channel-{index}",
+                "role": role,
+                "content": str(content),
+                "createdAt": created_at,
+            })
+
+        return _http_json_response({
+            "schemaVersion": 1,
+            "sessionKey": key,
+            "messages": messages,
+            "channel_session": True,
+        })
+
     def _handle_webui_thread_get(self, request: WsRequest, key: str) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
@@ -837,7 +896,7 @@ class GatewayHTTPHandler:
         if decoded_key is None:
             return _http_error(400, "invalid session key")
         if not _is_websocket_channel_session_key(decoded_key):
-            return _http_error(404, "session not found")
+            return self._handle_channel_session_thread(request, decoded_key)
         scope = self.workspaces.scope_for_session_key(decoded_key)
 
         def load_session_messages() -> list[dict[str, Any]] | None:
@@ -1246,8 +1305,6 @@ class GatewayHTTPHandler:
         decoded_key = _decode_api_key(key)
         if decoded_key is None:
             return _http_error(400, "invalid session key")
-        if not _is_websocket_channel_session_key(decoded_key):
-            return _http_error(404, "session not found")
         payload = await asyncio.to_thread(assembled_context_payload, decoded_key)
         if payload is None:
             return _http_error(404, "session not found")

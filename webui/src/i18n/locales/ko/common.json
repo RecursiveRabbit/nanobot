@@ -1361,6 +1361,7 @@
       }
     },
     "composer": {
+      "channelReadonly": "This is a {{channel}} session — read-only here; replies happen in {{channel}}.",
       "placeholderThread": "메시지를 입력하세요…",
       "placeholderHero": "무슨 생각을 하고 있나요?",
       "placeholderOpening": "새 주제를 여는 중…",

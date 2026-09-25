@@ -1361,6 +1361,7 @@
       }
     },
     "composer": {
+      "channelReadonly": "This is a {{channel}} session — read-only here; replies happen in {{channel}}.",
       "placeholderThread": "Ketik pesan Anda…",
       "placeholderHero": "Apa yang sedang Anda pikirkan?",
       "placeholderOpening": "Membuka topik baru…",

@@ -1007,6 +1007,7 @@ export const ChatList = memo(function ChatList({
                                       <span className="min-w-0 flex-1 truncate font-normal leading-5">
                                         {title}
                                       </span>
+                                      <ChannelBadge sessionKey={s.key} />
                                       {isPinned ? <PinnedChatIndicator /> : null}
                                     {timestamp ? (
                                       <span className="shrink-0 text-[11.5px] font-medium text-sidebar-muted-foreground">
@@ -1021,6 +1022,7 @@ export const ChatList = memo(function ChatList({
                                     <span className="min-w-0 flex-1 truncate font-normal leading-5">
                                       {title}
                                     </span>
+                                    <ChannelBadge sessionKey={s.key} />
                                     {isPinned ? <PinnedChatIndicator /> : null}
 
                                   </span>
@@ -1691,6 +1693,19 @@ function TemporaryChatSection({
         })}
       </ul>
     </section>
+  );
+}
+
+function ChannelBadge({ sessionKey }: { sessionKey: string }) {
+  const channel = sessionKey.split(":", 1)[0];
+  if (!channel || channel === "websocket") return null;
+  return (
+    <span
+      data-testid="channel-badge"
+      className="shrink-0 rounded bg-sidebar-accent/70 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sidebar-muted-foreground"
+    >
+      {channel}
+    </span>
   );
 }
 

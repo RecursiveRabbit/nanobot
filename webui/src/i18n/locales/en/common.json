@@ -1758,7 +1758,8 @@
         "defaultShort": "Default",
         "full": "Full Access",
         "fullShort": "Full"
-      }
+      },
+      "channelReadonly": "This is a {{channel}} session — read-only here; replies happen in {{channel}}."
     },
     "scrollToBottom": "Scroll to bottom",
     "loadEarlier": "Load earlier messages",
