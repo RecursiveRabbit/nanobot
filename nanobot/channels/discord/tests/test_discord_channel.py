@@ -36,7 +36,7 @@ class _FakeDiscordClient:
         self.closed = False
         self.ready = True
         self.channels: dict[int, object] = {}
-        self.user = SimpleNamespace(id=999)
+        self.user = SimpleNamespace(id=999, name="bot", display_name="Bot")
         self.__class__.instances.append(self)
 
     async def start(self, token: str) -> None:
@@ -356,7 +356,11 @@ async def test_on_message_accepts_allowlisted_dm() -> None:
 
     assert len(handled) == 1
     assert handled[0]["chat_id"] == "456"
-    assert handled[0]["metadata"] == {"message_id": "789", "guild_id": None, "reply_to": None}
+    md = handled[0]["metadata"]
+    # Rich inbound metadata (author/guild/channel/reply provenance) is by design;
+    # pin the essentials rather than exact equality.
+    assert md["message_id"] == "789" and md["guild_id"] is None and md["reply_to"] is None
+    assert md["author_id"] == "123" and md["channel_id"] == "456"
 
 
 @pytest.mark.asyncio
@@ -425,7 +429,7 @@ async def test_on_message_accepts_thread_when_parent_channel_in_allow_channels()
             channel_id=777,
             parent_channel_id=456,
             guild_id=1,
-            mentions=[SimpleNamespace(id=999)],
+            mentions=[SimpleNamespace(id=999, name="bot", display_name="Bot")],
         )
     )
 
@@ -598,7 +602,7 @@ async def test_on_message_accepts_mentioned_guild_message() -> None:
         _make_message(
             guild_id=1,
             content="<@999> hello",
-            mentions=[SimpleNamespace(id=999)],
+            mentions=[SimpleNamespace(id=999, name="bot", display_name="Bot")],
             reply_to=321,
         )
     )
@@ -652,7 +656,9 @@ async def test_on_message_marks_failed_attachment_download(tmp_path, monkeypatch
 
     assert len(handled) == 1
     assert handled[0]["media"] == []
-    assert handled[0]["content"] == "[attachment: photo.png - download failed]"
+    # Content carries the inbound header line (provenance prefix) + the marker.
+    assert "[attachment: photo.png - download failed]" in handled[0]["content"]
+    assert handled[0]["content"].startswith("[discord ·")
 
 
 @pytest.mark.asyncio
@@ -1526,3 +1532,43 @@ async def test_reset_discards_in_flight_compaction_notices() -> None:
     await owner._reset_runtime_state(close_client=False)
 
     assert owner._compaction_notices == {}
+
+
+async def test_unify_session_routes_everything_to_main() -> None:
+    """Evans 2026-09-24: all of Discord is one session — DM, channel, thread."""
+    channel = DiscordChannel(
+        DiscordConfig(
+            enabled=True,
+            allow_from=["*"],
+            group_policy="mention",
+            unify_session=True,
+        ),
+        MessageBus(),
+    )
+    channel._bot_user_id = "999"
+    handled: list[dict] = []
+
+    async def capture_handle(**kwargs) -> None:
+        handled.append(kwargs)
+
+    channel._handle_message = capture_handle  # type: ignore[method-assign]
+
+    # thread message
+    await channel._on_message(
+        _make_message(
+            channel_id=777,
+            parent_channel_id=456,
+            guild_id=1,
+            mentions=[SimpleNamespace(id=999, name="bot", display_name="Bot")],
+        )
+    )
+    # top-level guild message
+    await channel._on_message(
+        _make_message(channel_id=555, guild_id=1, mentions=[SimpleNamespace(id=999, name="bot", display_name="Bot")])
+    )
+    # DM
+    await channel._on_message(
+        _make_message(channel_id=321, guild_id=None, mentions=[])
+    )
+
+    assert [h["session_key"] for h in handled] == ["discord:main"] * 3

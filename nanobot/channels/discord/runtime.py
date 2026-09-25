@@ -58,6 +58,7 @@ class DiscordConfig(Base):
     allow_channels: list[str] = Field(default_factory=list)  # Allowed channel IDs (empty = all)
     intents: int = 37377
     group_policy: Literal["mention", "open"] = "mention"
+    unify_session: bool = False  # One session for the whole channel (DMs, guilds, threads)
     read_receipt_emoji: str = "👀"
     working_emoji: str = "🔧"
     working_emoji_delay: float = 2.0
@@ -175,7 +176,9 @@ if DISCORD_AVAILABLE:
                 "is_slash_command": True,
             }
             session_key = None
-            if channel is not None:
+            if self._channel.config.unify_session:
+                session_key = f"{self._channel.name}:main"
+            elif channel is not None:
                 parent_channel_id = self._channel._channel_parent_key(channel)
                 if parent_channel_id is not None:
                     metadata["parent_channel_id"] = parent_channel_id
@@ -620,7 +623,15 @@ class DiscordChannel(BaseChannel):
                         + self._compose_inbound_content(content, attachment_markers))
         parent_channel_id = self._channel_parent_key(message.channel)
         session_key = None
-        if parent_channel_id is not None:
+        if self.config.unify_session:
+            # Evans 2026-09-24: all of Discord is one session — the concierge
+            # holds every conversation, DM or guild or thread.
+            session_key = f"{self.name}:main"
+            if parent_channel_id is not None:
+                metadata["parent_channel_id"] = parent_channel_id
+                metadata["context_chat_id"] = parent_channel_id
+                metadata["thread_id"] = channel_id
+        elif parent_channel_id is not None:
             metadata["parent_channel_id"] = parent_channel_id
             metadata["context_chat_id"] = parent_channel_id
             metadata["thread_id"] = channel_id
@@ -717,12 +728,18 @@ class DiscordChannel(BaseChannel):
         # Reject unauthorized guild messages before any side effects, but let DMs
         # reach BaseChannel._handle_message so it can issue a pairing code.
         if message.guild is not None and not self.is_allowed(sender_id):
+            self.logger.info(
+                "guild message from {} in {} ignored (sender not allowed)",
+                sender_id, message.channel.id)
             return False
         # Channel-based filtering: only respond in allowed channels
         allow_channels = self.config.allow_channels
         if allow_channels:
             channel_ids = self._channel_allow_keys(message.channel)
             if channel_ids.isdisjoint(allow_channels):
+                self.logger.info(
+                    "guild message in {} ignored (channel not in allowChannels)",
+                    message.channel.id)
                 return False
         if message.guild is not None and not self._should_respond_in_group(message, content):
             return False
@@ -788,24 +805,25 @@ class DiscordChannel(BaseChannel):
                 reply_author = getattr(ref.author, "display_name", None) or ref.author.name
                 reply_excerpt = (ref.content or "")[:120] or None
         mentions = [
-            {"id": str(u.id), "name": getattr(u, "display_name", None) or u.name}
+            {"id": str(u.id), "name": getattr(u, "display_name", None) or getattr(u, "name", None) or str(u.id)}
             for u in message.mentions
         ]
+        created_at = getattr(message, "created_at", None)
         return {
             "message_id": str(message.id),
             "guild_id": str(guild.id) if guild else None,
-            "guild_name": guild.name if guild else None,
+            "guild_name": getattr(guild, "name", None) if guild else None,
             "channel_id": str(channel.id),
             "channel_name": getattr(channel, "name", None) or ("DM" if guild is None else None),
             "author_id": str(author.id),
-            "author_name": author.name,
-            "author_display_name": getattr(author, "display_name", None) or author.name,
+            "author_name": getattr(author, "name", None) or str(author.id),
+            "author_display_name": getattr(author, "display_name", None) or getattr(author, "name", None) or str(author.id),
             "author_bot": bool(getattr(author, "bot", False)),
             "reply_to": reply_to,
             "reply_to_author": reply_author,
             "reply_to_excerpt": reply_excerpt,
             "mentions": mentions or None,
-            "timestamp": message.created_at.isoformat() if message.created_at else None,
+            "timestamp": created_at.isoformat() if created_at else None,
         }
 
     @staticmethod
