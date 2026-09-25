@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useClient } from "@/providers/ClientProvider";
 import { normalizeWorkbenchState } from "@/components/workbench/workbench-model";
 import { fetchSidebarState } from "@/lib/api";
-import type { ChatSummary, SidebarStatePayload } from "@/lib/types";
+import type { SidebarStatePayload } from "@/lib/types";
 
 const DEFAULT_SIDEBAR_STATE: SidebarStatePayload = {
   schema_version: 1,
@@ -107,37 +107,11 @@ function normalizeSidebarState(raw: unknown): SidebarStatePayload {
   };
 }
 
-function pruneMissingSessions(
-  state: SidebarStatePayload,
-  sessions: ChatSummary[],
-): SidebarStatePayload {
-  const valid = new Set(sessions.map((session) => session.key));
-  const filterKeys = (keys: string[]) => keys.filter((key) => valid.has(key));
-  const filterMap = <T,>(map: Record<string, T>): Record<string, T> => {
-    const out: Record<string, T> = {};
-    for (const [key, value] of Object.entries(map)) {
-      if (valid.has(key)) out[key] = value;
-    }
-    return out;
-  };
-  return {
-    ...state,
-    pinned_keys: filterKeys(state.pinned_keys),
-    archived_keys: filterKeys(state.archived_keys),
-    session_order: filterKeys(state.session_order),
-    title_overrides: filterMap(state.title_overrides),
-    tags_by_key: filterMap(state.tags_by_key),
-  };
-}
-
 function sameState(a: SidebarStatePayload, b: SidebarStatePayload): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-export function useSidebarState(
-  sessions: ChatSummary[],
-  sessionsLoaded: boolean,
-): {
+export function useSidebarState(): {
   state: SidebarStatePayload;
   loading: boolean;
   update: (
@@ -238,15 +212,9 @@ export function useSidebarState(
     [persist],
   );
 
-  const pruned = useMemo(() => {
-    if (!sessionsLoaded || loading) return state;
-    return pruneMissingSessions(state, sessions);
-  }, [loading, sessions, sessionsLoaded, state]);
-
-  useEffect(() => {
-    if (!sessionsLoaded || loading || sameState(pruned, state)) return;
-    void update(() => pruned);
-  }, [loading, pruned, sessionsLoaded, state, update]);
-
+  // Display-layer pruning of missing sessions must never write back: a
+  // partial or failed session list would otherwise permanently erase the
+  // operator's renames and groups from disk. Organization data outlives the
+  // session list.
   return { state, loading, update };
 }

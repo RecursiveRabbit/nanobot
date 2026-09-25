@@ -120,9 +120,6 @@ def system_settings_payload(
                 "enabled": config.gateway.heartbeat.enabled,
                 "interval_s": config.gateway.heartbeat.interval_s,
             },
-            "dream": {
-                "schedule": defaults.dream.describe_schedule(),
-            },
             "unified_session": defaults.unified_session,
         },
         "usage": llm_usage_payload(timezone_name=defaults.timezone),

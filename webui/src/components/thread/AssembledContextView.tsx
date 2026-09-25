@@ -15,6 +15,9 @@ interface AssembledContextViewProps {
   token: string;
   /** Bumped when a turn ends; refreshes the assembly. */
   refreshKey?: unknown;
+  /** Live composer draft — rendered in its wire form so the screen matches
+   * what pressing enter sends, including the tail-merge rule. */
+  draftText?: string;
 }
 
 function messageText(content: unknown): string {
@@ -39,6 +42,7 @@ export function AssembledContextView({
   sessionKey,
   token,
   refreshKey,
+  draftText,
 }: AssembledContextViewProps) {
   const { t } = useTranslation();
   const [payload, setPayload] = useState<AssembledContextPayload | null>(null);
@@ -119,6 +123,9 @@ export function AssembledContextView({
                     checkpoint={payload.message_flags[index + 1]?.checkpoint === true}
                   />
                 ))}
+                {draftText?.trim() ? (
+                  <PendingSendRow messages={payload.messages} draft={draftText} />
+                ) : null}
               </div>
             </section>
           </div>
@@ -214,6 +221,41 @@ function McpSection({ payload }: { payload: AssembledContextPayload }) {
         ))}
       </div>
     </Collapsible>
+  );
+}
+
+/**
+ * The draft in its wire form. The transcript merges a typed message into a
+ * trailing user message (`tail\n\ndraft`); the preview reproduces that merge
+ * so what is on screen is what pressing enter sends.
+ */
+function PendingSendRow({
+  messages,
+  draft,
+}: {
+  messages: AssembledContextMessage[];
+  draft: string;
+}) {
+  const { t } = useTranslation();
+  const tail = messages.length > 1 ? messages[messages.length - 1] : null;
+  const merges = tail?.role === "user";
+  const wireText = merges
+    ? `${messageText(tail.content)}\n\n${draft}`
+    : draft;
+
+  return (
+    <div
+      className="rounded-lg border border-dashed border-primary/50 p-3"
+      data-testid="assembled-pending-send"
+    >
+      <div className="mb-1 text-[11px] font-medium text-primary">
+        {t("assembledView.pendingSend")}
+        {merges ? ` · ${t("assembledView.mergedIntoTail")}` : ""}
+      </div>
+      <pre className="whitespace-pre-wrap break-words font-sans text-[13px]/[1.5]">
+        {wireText}
+      </pre>
+    </div>
   );
 }
 

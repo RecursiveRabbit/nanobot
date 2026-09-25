@@ -3216,3 +3216,74 @@ describe("ThreadComposer", () => {
   });
 
 });
+
+describe("composer drafts", () => {
+  it("restores a draft after unmount and clears it on send", async () => {
+    localStorage.clear();
+    const key = "nanobot:composer-draft:websocket:chat-1";
+    const onSend = vi.fn();
+
+    const first = render(
+      <ThreadComposer
+        onSend={onSend}
+        placeholder="Type your message..."
+        draftKey="websocket:chat-1"
+      />,
+    );
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "grade A infrastructure rant" } });
+    await waitFor(() => expect(localStorage.getItem(key)).toBe("grade A infrastructure rant"));
+    first.unmount();
+
+    const second = render(
+      <ThreadComposer
+        onSend={onSend}
+        placeholder="Type your message..."
+        draftKey="websocket:chat-1"
+      />,
+    );
+    const restored = screen.getByLabelText("Message input");
+    expect(restored).toHaveValue("grade A infrastructure rant");
+
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(localStorage.getItem(key)).toBeNull());
+    second.unmount();
+  });
+
+  it("keeps drafts per conversation", async () => {
+    localStorage.clear();
+    const view = render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        draftKey="websocket:a"
+      />,
+    );
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "draft for a" } });
+    await waitFor(() =>
+      expect(localStorage.getItem("nanobot:composer-draft:websocket:a")).toBe("draft for a"));
+
+    view.rerender(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        draftKey="websocket:b"
+      />,
+    );
+    const other = screen.getByLabelText("Message input");
+    expect(other).toHaveValue("");
+    fireEvent.change(other, { target: { value: "draft for b" } });
+    await waitFor(() =>
+      expect(localStorage.getItem("nanobot:composer-draft:websocket:b")).toBe("draft for b"));
+
+    view.rerender(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        draftKey="websocket:a"
+      />,
+    );
+    expect(screen.getByLabelText("Message input")).toHaveValue("draft for a");
+  });
+});

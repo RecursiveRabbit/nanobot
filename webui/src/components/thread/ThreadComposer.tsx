@@ -191,6 +191,11 @@ interface ThreadComposerProps {
     images?: SendAttachment[],
     options?: SendOptions,
   ) => boolean | void | Promise<boolean | void>;
+  /** Persist the draft under this key (session key); survives tab switches,
+   * new tabs, and crashes. Cleared only when the draft leaves the box. */
+  draftKey?: string | null;
+  /** Reports the live draft (drives the assembled-context wire preview). */
+  onDraftChange?: (text: string) => void;
   disabled?: boolean;
   placeholder?: string;
   inputAriaLabel?: string;
@@ -928,6 +933,8 @@ export function ThreadComposer({
   onPickWorkspaceFolder,
   onWorkspaceScopeChange,
   pendingQueueKey = null,
+  draftKey = null,
+  onDraftChange,
   transcriptionProvider = null,
   ingressLimits = null,
   quotedContext = null,
@@ -936,6 +943,51 @@ export function ThreadComposer({
 }: ThreadComposerProps) {
   const { t } = useTranslation();
   const [value, setValue] = useState("");
+  const draftStorageKey = draftKey ? `nanobot:composer-draft:${draftKey}` : null;
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const draftKeyRef = useRef(draftStorageKey);
+
+  // Restore this conversation's draft; switching conversations first flushes
+  // the current draft under its own key.
+  useEffect(() => {
+    const prevKey = draftKeyRef.current;
+    const changed = prevKey !== draftStorageKey;
+    if (changed && prevKey && valueRef.current) {
+      try { localStorage.setItem(prevKey, valueRef.current); } catch { /* storage blocked */ }
+    }
+    draftKeyRef.current = draftStorageKey;
+    if (!draftStorageKey) return;
+    try {
+      const saved = localStorage.getItem(draftStorageKey);
+      if (changed) setValue(saved ?? "");
+      else if (saved) setValue((current) => current || saved);
+    } catch { /* storage blocked */ }
+  }, [draftStorageKey]);
+
+  // Debounced write-through; an empty box stores no draft.
+  useEffect(() => {
+    if (!draftStorageKey) return;
+    const timer = setTimeout(() => {
+      try {
+        if (value) localStorage.setItem(draftStorageKey, value);
+        else localStorage.removeItem(draftStorageKey);
+      } catch { /* storage full/blocked */ }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [draftStorageKey, value]);
+
+  // Crash/tab-close path: flush the latest draft on unmount.
+  useEffect(() => () => {
+    const key = draftKeyRef.current;
+    if (key && valueRef.current) {
+      try { localStorage.setItem(key, valueRef.current); } catch { /* ignore */ }
+    }
+  }, []);
+
+  useEffect(() => {
+    onDraftChange?.(value);
+  }, [value, onDraftChange]);
   const [selectedSessionMentions, setSelectedSessionMentions] = useState<SessionMention[]>([]);
   const [sessionDragPreview, setSessionDragPreview] = useState<{
     mention: SessionMention;

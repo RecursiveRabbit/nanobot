@@ -39,7 +39,7 @@ describe("useSidebarState", () => {
         {children}
       </ClientProvider>
     );
-    const { result } = renderHook(() => useSidebarState([], false), { wrapper });
+    const { result } = renderHook(() => useSidebarState(), { wrapper });
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     act(() => {
@@ -65,5 +65,58 @@ describe("useSidebarState", () => {
     expect(setSidebarState.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
       title_overrides: { "websocket:a": "Second" },
     }));
+  });
+});
+
+describe("sidebar persistence regression", () => {
+  it("never prunes overrides for sessions missing from the list", async () => {
+    // Evans' renames/groups kept vanishing on refresh: the hook auto-persisted
+    // a state pruned of any session absent from the current list. The write
+    // path is fine; the prune write-back was the wipe.
+    const setSidebarState = vi.fn(async (state: SidebarStatePayload) => state);
+    const client = {
+      status: "open" as const,
+      onStatus: () => () => {},
+      onSidebarStateUpdate: () => () => {},
+      setSidebarState,
+    } as unknown as NanobotClient;
+    const loadedState: SidebarStatePayload = {
+      schema_version: 1,
+      pinned_keys: [],
+      archived_keys: [],
+      session_order: [],
+      title_overrides: { "websocket:missing-from-list": "Sexton" },
+      project_name_overrides: { sysadmin: "Sysadmin" },
+      tags_by_key: { "websocket:missing-from-list": ["sysadmin"] },
+      collapsed_groups: {},
+      workbench: { version: 1, tabs: {} },
+      view: {
+        density: "comfortable",
+        show_previews: false,
+        show_timestamps: false,
+        show_archived: false,
+        sort: "updated_desc",
+      },
+      updated_at: "2026-09-24T00:00:00Z",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => loadedState,
+    }));
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <ClientProvider client={client} token="token">
+        {children}
+      </ClientProvider>
+    );
+
+    const { result } = renderHook(() => useSidebarState(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    // The override survives in state...
+    expect(result.current.state.title_overrides["websocket:missing-from-list"]).toBe("Sexton");
+    // ...and nothing is written back merely because the session list lacks it.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(setSidebarState).not.toHaveBeenCalled();
   });
 });

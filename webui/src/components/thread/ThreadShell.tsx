@@ -1344,8 +1344,11 @@ export function ThreadShell({
     setMessages(projectWebuiThreadMessages(historical));
   }, [chatId, historical, setMessages]);
 
+  const [draftText, setDraftText] = useState("");
+
   useEffect(() => {
-    setModelViewOpen(false);
+    setModelViewOpen(true);
+    setDraftText("");
   }, [chatId]);
 
   useLayoutEffect(() => {
@@ -1578,6 +1581,8 @@ export function ThreadShell({
         <ThreadComposer
           onSend={handleThreadSend}
           disabled={!chatId}
+          draftKey={historyKey ?? "new"}
+          onDraftChange={setDraftText}
           inputAriaLabel={composerInputAriaLabel}
           isStreaming={turnActive}
           placeholder={
@@ -1628,6 +1633,8 @@ export function ThreadShell({
         <ThreadComposer
           onSend={handleWelcomeSend}
           disabled={booting}
+          draftKey="new"
+          onDraftChange={setDraftText}
           inputAriaLabel={composerInputAriaLabel}
           isStreaming={turnActive}
           placeholder={
@@ -1759,7 +1766,7 @@ export function ThreadShell({
         >
           {modelViewOpen && historyKey ? (
             <>
-              <AssembledContextView sessionKey={historyKey} token={token} refreshKey={turnActive} />
+              <AssembledContextView sessionKey={historyKey} token={token} refreshKey={turnActive} draftText={draftText} />
               {composerPortalTarget === undefined ? (
                 <div className="shrink-0">{composer}</div>
               ) : null}

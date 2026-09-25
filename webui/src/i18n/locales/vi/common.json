@@ -67,7 +67,9 @@
     "roleTool": "tool",
     "roleSystem": "system",
     "viewTranscript": "View full transcript",
-    "viewContext": "View model context"
+    "viewContext": "View model context",
+    "pendingSend": "pending — the wire form when you press enter",
+    "mergedIntoTail": "merged into the previous message"
   },
   "stringsPage": {
     "title": "Context strings",

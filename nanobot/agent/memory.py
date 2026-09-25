@@ -33,27 +33,8 @@ from nanobot.utils.helpers import (
     ensure_dir,
     estimate_prompt_tokens_chain,
     strip_think,
-    truncate_text,
-    truncate_text_to_tokens,
 )
 from nanobot.utils.prompt_templates import render_template
-from nanobot.utils.workspace_prompts import (
-
-    WORKSPACE_PROMPT_MAX_CHARS,
-    has_workspace_prompt_override,
-    load_workspace_prompt_override,
-    workspace_prompt_file,
-)
-
-from nanobot.utils.strings import register_literal, text as string_text
-
-_DREAM_HISTORY_HEADER = register_literal(
-    "literal:dream_history_header",
-    "\n\n## Conversation History\n{history}",
-    group="Memory pipeline",
-    advanced=True,
-)
-
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.registry import ToolRegistry
@@ -68,10 +49,6 @@ class MemoryStore:
     """Pure file I/O for memory files: MEMORY.md, history.jsonl, SOUL.md, USER.md."""
 
     _DEFAULT_MAX_HISTORY = 1000
-    # Durable files whose real working-tree delta grounds Dream commit messages.
-    # Deliberately excludes memory/.dream_cursor so progress bookkeeping never
-    # appears as a durable-memory edit in the audit record.
-    _DREAM_CONTENT_PATHS = ("SOUL.md", "USER.md", "memory/MEMORY.md")
     _LEGACY_ENTRY_START_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2}[^\]]*)\]\s*")
     _LEGACY_TIMESTAMP_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\]\s*")
     _LEGACY_RAW_MESSAGE_RE = re.compile(
@@ -88,13 +65,11 @@ class MemoryStore:
         self.soul_file = workspace / "SOUL.md"
         self.user_file = workspace / "USER.md"
         self._cursor_file = self.memory_dir / ".cursor"
-        self._dream_cursor_file = self.memory_dir / ".dream_cursor"
         self._corruption_logged = False  # rate-limit invalid cursor warning
         self._malformed_entry_logged = False  # rate-limit bad history shape warning
-        self._dream_prompt_oversize_logged = False
         self._append_lock = threading.Lock()  # serialize cursor allocation + append
         self._git = GitStore(workspace, tracked_files=[
-            "SOUL.md", "USER.md", "memory/MEMORY.md", "memory/.dream_cursor",
+            "SOUL.md", "USER.md", "memory/MEMORY.md",
         ])
         self._maybe_migrate_legacy_history()
 
@@ -137,9 +112,6 @@ class MemoryStore:
                 self._write_entries(entries)
                 last_cursor = entries[-1]["cursor"]
                 self._cursor_file.write_text(str(last_cursor), encoding="utf-8")
-                # Default to "already processed" so upgrades do not replay the
-                # user's entire historical archive into Dream on first start.
-                self._dream_cursor_file.write_text(str(last_cursor), encoding="utf-8")
 
             backup_path = self._next_legacy_backup_path()
             self.legacy_history_file.replace(backup_path)
@@ -293,7 +265,7 @@ class MemoryStore:
         persisted. If the cleaned content is empty but the raw entry wasn't,
         the record is persisted with an empty string rather than falling back
         to the raw leak — otherwise `strip_think`'s guarantees would be
-        undone when Dream consumes the journal entry.
+        undone when the journal entry is consumed downstream.
 
         No length cap. Evans, 2026-09-24: an agent may return its whole
         context as a summary if it chooses; nothing here measures size.
@@ -308,7 +280,7 @@ class MemoryStore:
             if raw and not content:
                 logger.debug(
                     "history entry {} stripped to empty (likely template leak); "
-                    "persisting empty content to avoid re-polluting Dream input",
+                    "persisting empty content to avoid re-polluting journal consumers",
                     cursor,
                 )
             record = {"cursor": cursor, "timestamp": ts, "content": content}
@@ -398,36 +370,6 @@ class MemoryStore:
         """Return history entries with a valid cursor > *since_cursor*."""
         return [e for e, c in self._iter_valid_entries() if c > since_cursor]
 
-    def compact_history(self) -> None:
-        """Drop oldest processed entries without discarding pending Dream input."""
-        if self.max_history_entries <= 0:
-            return
-        entries = self._read_entries()
-        if len(entries) <= self.max_history_entries:
-            return
-        last_dream_cursor = self.get_last_dream_cursor()
-        first_unprocessed = next(
-            (
-                index
-                for index, entry in enumerate(entries)
-                if (
-                    (cursor := self._valid_cursor(entry.get("cursor"))) is not None
-                    and cursor > last_dream_cursor
-                )
-            ),
-            len(entries),
-        )
-        keep_from = min(len(entries) - self.max_history_entries, first_unprocessed)
-        kept = entries[keep_from:]
-        if len(kept) > self.max_history_entries:
-            logger.warning(
-                "History compaction retained {} unprocessed entries beyond the configured "
-                "limit of {}",
-                len(kept),
-                self.max_history_entries,
-            )
-        self._write_entries(kept)
-
     # -- JSONL helpers -------------------------------------------------------
 
     def _read_entries(self) -> list[dict[str, Any]]:
@@ -491,205 +433,8 @@ class MemoryStore:
             tmp_path.unlink(missing_ok=True)
             raise
 
-    # -- dream cursor --------------------------------------------------------
-
-    def get_last_dream_cursor(self) -> int:
-        if self._dream_cursor_file.exists():
-            with suppress(ValueError, OSError):
-                return int(self._dream_cursor_file.read_text(encoding="utf-8").strip())
-        return 0
-
-    def set_last_dream_cursor(self, cursor: int) -> None:
-        self._dream_cursor_file.write_text(str(cursor), encoding="utf-8")
-
     def get_latest_cursor(self) -> int:
         return max(self._next_cursor() - 1, 0)
-
-    @property
-    def dream_prompt_file(self) -> Path:
-        return workspace_prompt_file(self.workspace, "dream")
-
-    def has_dream_prompt_override(self) -> bool:
-        return has_workspace_prompt_override(self.dream_prompt_file)
-
-    @staticmethod
-    def default_dream_prompt() -> str:
-        from nanobot.agent.skills import BUILTIN_SKILLS_DIR
-
-        return render_template(
-            "agent/dream.md",
-            strip=True,
-            skill_creator_path=str(BUILTIN_SKILLS_DIR / "skill-creator" / "SKILL.md"),
-        )
-
-    def _dream_template(self) -> str:
-        text, original_chars = load_workspace_prompt_override(self.dream_prompt_file)
-        if text is not None:
-            if (
-                original_chars > WORKSPACE_PROMPT_MAX_CHARS
-                and not self._dream_prompt_oversize_logged
-            ):
-                self._dream_prompt_oversize_logged = True
-                logger.warning(
-                    "workspace Dream prompt exceeds {} chars ({}); truncating. "
-                    "Further occurrences suppressed.",
-                    WORKSPACE_PROMPT_MAX_CHARS, original_chars,
-                )
-            return text
-        return self.default_dream_prompt()
-
-    def build_dream_prompt(self, *, max_entries: int = 20) -> tuple[str, int] | None:
-        """Build the Dream prompt with unprocessed history context.
-
-        Returns ``(prompt, last_cursor)`` or ``None`` if nothing to process.
-
-        The current contents of the durable memory files (SOUL.md, USER.md,
-        memory/MEMORY.md) reach Dream through the normal agent system context.
-        """
-        last_cursor = self.get_last_dream_cursor()
-        entries = self.read_unprocessed_history(since_cursor=last_cursor)
-        if not entries:
-            return None
-
-        batch = entries[:max_entries]
-        history_text = "\n".join(
-            f"[{e['timestamp']}] {truncate_text(e['content'], 1000)}"
-            for e in batch
-        )
-        template = self._dream_template()
-        prompt = (
-            template
-            + string_text("literal:dream_history_header", _DREAM_HISTORY_HEADER)
-            .replace("{history}", history_text)
-        )
-        return (prompt, batch[-1]["cursor"])
-
-    def dream_content_diff(self) -> str:
-        """Structured summary of uncommitted changes to the durable memory files.
-
-        Returns "" when git is unavailable or no content file changed. This is
-        the ground-truth input for diff-grounded Dream commit messages.
-        """
-        if not self._git.is_initialized():
-            return ""
-        return self._git.summarize_working_tree(list(self._DREAM_CONTENT_PATHS))
-
-    def build_dream_tools(self) -> ToolRegistry:
-        """Build the restricted tool registry used by Dream runs."""
-        from nanobot.agent.skills import BUILTIN_SKILLS_DIR
-        from nanobot.agent.tools.apply_patch import ApplyPatchTool
-        from nanobot.agent.tools.file_state import FileStates
-        from nanobot.agent.tools.filesystem import EditFileTool, ReadFileTool, WriteFileTool
-        from nanobot.agent.tools.registry import ToolRegistry
-
-        tools = ToolRegistry()
-        file_states = FileStates()
-        workspace = self.workspace
-        skills_dir = workspace / "skills"
-        skills_dir.mkdir(parents=True, exist_ok=True)
-
-        extra_read = [BUILTIN_SKILLS_DIR] if BUILTIN_SKILLS_DIR.exists() else None
-        editable_files = [self.memory_file, self.soul_file, self.user_file]
-
-        tools.register(ReadFileTool(
-            workspace=workspace,
-            allowed_dir=workspace,
-            extra_read_allowed_dirs=extra_read,
-            file_states=file_states,
-        ))
-        tools.register(EditFileTool(
-            workspace=workspace,
-            allowed_dir=skills_dir,
-            extra_write_allowed_files=editable_files,
-            file_states=file_states,
-        ))
-        tools.register(ApplyPatchTool(
-            workspace=workspace,
-            allowed_dir=skills_dir,
-            extra_write_allowed_files=editable_files,
-            file_states=file_states,
-        ))
-        tools.register(WriteFileTool(
-            workspace=workspace,
-            allowed_dir=skills_dir,
-            extra_write_allowed_files=editable_files,
-            file_states=file_states,
-        ))
-        return tools
-
-    @staticmethod
-    def dream_run_completed(
-        resp: object | None,
-    ) -> bool:
-        """Return True when the Dream agent reached a normal terminal response."""
-        metadata = getattr(resp, "metadata", None)
-        if not isinstance(metadata, dict):
-            return False
-        return cast(dict[str, Any], metadata).get("_stop_reason") == "completed"
-
-    @staticmethod
-    def dream_incompletion_reason(
-        resp: object | None,
-    ) -> str:
-        """Human-readable explanation of why a Dream run cannot advance."""
-        metadata = getattr(resp, "metadata", None)
-        if isinstance(metadata, dict):
-            stop_reason = cast(dict[str, Any], metadata).get("_stop_reason", "unknown")
-        else:
-            stop_reason = "missing response metadata"
-        return f"stop_reason: {stop_reason}"
-
-    # -- message formatting utility ------------------------------------------
-
-
-    # ------------------------------------------------------------------
-    # Dream helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def dream_session_key() -> str:
-        """Return a unique session key for a Dream run, e.g. ``dream:20260528-100000``."""
-        return f"dream:{datetime.now():%Y%m%d-%H%M%S}"
-
-    @staticmethod
-    def build_dream_commit_message(prefix: str, diff_body: str) -> str:
-        """Build a Dream commit message grounded in the real working-tree diff.
-
-        *diff_body* is a structured, machine-derived summary of the actual file
-        changes (see :meth:`dream_content_diff` /
-        :meth:`GitStore.summarize_working_tree`). The LLM narrative is
-        deliberately excluded so the audit record (``/dream-log``) reflects the
-        filesystem's truth, not the model's self-report.
-
-        An empty *diff_body* yields the bare *prefix*, which ``auto_commit``
-        turns into a no-op when there is nothing to stage.
-        """
-        diff_body = (diff_body or "").strip()
-        if not diff_body:
-            return prefix
-        return f"{prefix}\n\n{diff_body}"
-
-    @staticmethod
-    def prune_dream_sessions(sessions: SessionManager, *, keep: int = 10) -> None:
-        """Remove the oldest Dream session files, keeping only the N most recent.
-
-        Only current base64url-encoded Dream session keys are considered.
-        Non-dream session files are never touched.
-        """
-        with sessions.locked_session_files() as sessions_dir:
-            dream_files: list[tuple[Path, str]] = []
-            for path in sessions_dir.glob("*.jsonl"):
-                decoded_key = SessionManager.decode_storage_key(path.stem)
-                if decoded_key is not None and decoded_key.startswith("dream:"):
-                    dream_files.append((path, decoded_key))
-            dream_files.sort(key=lambda item: item[0].stat().st_mtime)
-
-            for path, key in dream_files[: max(0, len(dream_files) - keep)]:
-                if sessions.delete_session(key):
-                    logger.debug("Pruned old dream session: {}", path.stem)
-                else:
-                    logger.warning("Failed to prune dream session {}", path)
-
 
 # ---------------------------------------------------------------------------
 # Memory ingestion and context-pressure coordination
@@ -792,7 +537,7 @@ class MemoryArchiver:
                 return None
 
         try:
-            with llm_usage_source("dream"):
+            with llm_usage_source("system"):
                 response = await runtime.provider.chat_stream_with_retry(
                     model=runtime.model,
                     messages=request_messages,

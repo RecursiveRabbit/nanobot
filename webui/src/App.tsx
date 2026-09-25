@@ -1049,7 +1049,7 @@ function Shell({
     loading: sidebarStateLoading,
     update: updateSidebarState,
   } =
-    useSidebarState(sessions, !loading);
+    useSidebarState();
   const initialRouteRef = useRef<ShellRoute | null>(null);
   if (!initialRouteRef.current) initialRouteRef.current = readShellRoute();
   const [activeKey, setActiveKey] = useState<string | null>(
