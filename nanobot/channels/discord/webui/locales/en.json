@@ -50,6 +50,10 @@
           "true": "On",
           "false": "Off"
         }
+      },
+      "unifySession": {
+        "label": "One session for all of Discord",
+        "description": "DMs, guild channels, and threads share a single concierge session."
       }
     }
   }
