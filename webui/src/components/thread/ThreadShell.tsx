@@ -794,7 +794,23 @@ export function ThreadShell({
   const [pendingFirstTargetChatId, setPendingFirstTargetChatId] = useState<string | null>(null);
   const viewportRef = useRef<ThreadViewportHandle | null>(null);
   // The window defaults to the model's view; the toggle reveals the raw log.
-  const [modelViewOpen, setModelViewOpen] = useState(true);
+  // The choice persists per operator across sessions and refreshes.
+  const [modelViewOpen, setModelViewOpenState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("nanobot:thread-view") !== "transcript";
+    } catch {
+      return true;
+    }
+  });
+  const setModelViewOpen = useCallback((next: boolean | ((open: boolean) => boolean)) => {
+    setModelViewOpenState((current) => {
+      const value = typeof next === "function" ? next(current) : next;
+      try {
+        localStorage.setItem("nanobot:thread-view", value ? "context" : "transcript");
+      } catch { /* storage blocked */ }
+      return value;
+    });
+  }, []);
   const activeViewportTurnByChatIdRef = useRef<Map<string, string>>(new Map());
   const knownTemporaryChatIdsRef = useRef(new Set<string>());
   const messageCacheRef = useRef(new ThreadMessageCache(
@@ -1347,7 +1363,6 @@ export function ThreadShell({
   const [draftText, setDraftText] = useState("");
 
   useEffect(() => {
-    setModelViewOpen(true);
     setDraftText("");
   }, [chatId]);
 

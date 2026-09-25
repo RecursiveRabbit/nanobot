@@ -417,6 +417,9 @@ function settingsWithFastPreset(): SettingsPayload {
 
 describe("ThreadShell", () => {
   beforeEach(() => {
+    // These tests exercise thread mechanics in the transcript view; the
+    // assembled-context view is covered separately (assembled-context-view).
+    localStorage.setItem("nanobot:thread-view", "transcript");
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({

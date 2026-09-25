@@ -24,8 +24,6 @@ SessionEventFactory = Callable[[str], EventSink]
 
 
 class AutoCompact:
-    _INTERNAL_SESSION_PREFIXES = ("dream:",)
-
     def __init__(self, sessions: SessionManager, consolidator: Consolidator,
                  session_ttl_minutes: int = 0,
                  bind_events: SessionEventFactory | None = None):
@@ -61,10 +59,6 @@ class AutoCompact:
             for message in session.messages[session.last_archived:]
         )
 
-    @classmethod
-    def _is_internal_session(cls, key: str) -> bool:
-        return key.startswith(cls._INTERNAL_SESSION_PREFIXES)
-
     def check_expired(
         self,
         schedule_background: Callable[[Coroutine[Any, Any, None]], None],
@@ -75,7 +69,7 @@ class AutoCompact:
         now = datetime.now()
         for info in self.sessions.list_sessions():
             key = info.get("key", "")
-            if not key or self._is_internal_session(key) or key in self._archiving:
+            if not key or key in self._archiving:
                 continue
             if key in active_session_keys:
                 continue
@@ -91,9 +85,6 @@ class AutoCompact:
                 schedule_background(self._archive(key, runtime=runtime))
 
     async def _archive(self, key: str, *, runtime: LLMRuntime) -> None:
-        if self._is_internal_session(key):
-            self._archiving.discard(key)
-            return
         try:
             summary = await self.consolidator.compact_idle_session(
                 key,
@@ -114,10 +105,6 @@ class AutoCompact:
             self._archiving.discard(key)
 
     def prepare_session(self, session: Session, key: str) -> tuple[Session, SessionSummary | None]:
-        if self._is_internal_session(key):
-            self._archiving.discard(key)
-            self._summaries.pop(key, None)
-            return session, None
         if key in self._archiving or self._is_expired(session.updated_at):
             logger.info("Auto-compact: reloading session {} (archiving={})", key, key in self._archiving)
             session = self.sessions.get_or_create(key)

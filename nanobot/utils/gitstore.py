@@ -15,9 +15,10 @@ if TYPE_CHECKING:
     from dulwich.refs import Ref
     from dulwich.repo import Repo
 
-# Cap on the unified-diff block embedded in Dream commit messages. Memory files
-# are tiny in practice, but a pathological rewrite must not blow up the audit
-# record. The structured per-file summary is always emitted in full regardless.
+# Cap on the unified-diff block embedded in memory commit messages. Memory
+# files are tiny in practice, but a pathological rewrite must not blow up the
+# audit record. The structured per-file summary is always emitted in full
+# regardless.
 _WORKING_TREE_DIFF_MAX_CHARS = 6000
 
 
@@ -81,20 +82,20 @@ class GitStore:
 
             # Write .gitignore (merge with existing if present)
             gitignore = self._workspace / ".gitignore"
-            dream_entries = self._build_gitignore()
+            entries = self._build_gitignore()
             if gitignore.exists():
                 existing = gitignore.read_text(encoding="utf-8")
                 existing_lines = set(existing.splitlines())
                 new_lines = [
                     line
-                    for line in dream_entries.splitlines()
+                    for line in entries.splitlines()
                     if line not in existing_lines
                 ]
                 if new_lines:
                     merged = existing.rstrip("\n") + "\n" + "\n".join(new_lines) + "\n"
                     gitignore.write_text(merged, encoding="utf-8")
             else:
-                gitignore.write_text(dream_entries, encoding="utf-8")
+                gitignore.write_text(entries, encoding="utf-8")
 
             # Ensure tracked files exist (touch them if missing) so the initial
             # commit has something to track.

@@ -147,7 +147,6 @@ _TEMPLATE_GROUPS = {
     "agent/evaluator.md": "Goals & subagents",
     "agent/subagent_announce.md": "Goals & subagents",
     "agent/subagent_system.md": "Goals & subagents",
-    "agent/dream.md": "Memory pipeline",
 }
 
 _TEMPLATE_ADVANCED = {
@@ -155,5 +154,4 @@ _TEMPLATE_ADVANCED = {
     "agent/evaluator.md": True,
     "agent/subagent_announce.md": True,
     "agent/subagent_system.md": True,
-    "agent/dream.md": True,
 }

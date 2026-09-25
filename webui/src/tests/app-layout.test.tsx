@@ -286,6 +286,9 @@ import App from "@/App";
 describe("App layout", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
+    // Thread mechanics live in the transcript view; the assembled-context
+    // default view is covered by its own suite.
+    localStorage.setItem("nanobot:thread-view", "transcript");
     mockSessions = [];
     connectSpy.mockClear();
     updateUrlSpy.mockClear();

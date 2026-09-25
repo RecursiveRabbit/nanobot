@@ -18,8 +18,6 @@ _CURRENT_SOURCE: ContextVar[LLMUsageSource] = ContextVar(
 def source_from_session_key(session_key: str | None) -> LLMUsageSource:
     """Classify a private session key without persisting that key."""
     key = session_key or ""
-    if key.startswith("dream:"):
-        return "dream"
     if key == "heartbeat" or key.startswith("cron:"):
         return "cron"
     if key.startswith("api:"):
