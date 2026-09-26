@@ -850,6 +850,37 @@ class GatewayHTTPHandler:
 
         from nanobot.session.history_visibility import is_hidden_history_message
 
+        def text_of(content: Any) -> str:
+            if isinstance(content, list):
+                return "\n".join(
+                    str(block.get("text", ""))
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                )
+            return "" if content is None else str(content)
+
+        def created_ms(raw: dict[str, Any]) -> int:
+            try:
+                return int(datetime.fromisoformat(str(raw.get("timestamp"))).timestamp() * 1000)
+            except (TypeError, ValueError):
+                return 0
+
+        # Pair assistant tool_calls with their tool-result records by call id
+        # so thinking and tool activity surface alongside the turns.
+        tool_results: dict[str, dict[str, Any]] = {}
+        for raw in raw_messages:
+            if isinstance(raw, dict) and raw.get("role") == "tool":
+                call_id = raw.get("tool_call_id")
+                if isinstance(call_id, str) and call_id:
+                    tool_results[call_id] = raw
+
+        called_ids = {
+            call.get("id")
+            for raw in raw_messages
+            if isinstance(raw, dict) and raw.get("role") == "assistant"
+            for call in (raw.get("tool_calls") or [])
+            if isinstance(call, dict) and call.get("id")
+        }
         messages = []
         for index, raw in enumerate(raw_messages):
             if not isinstance(raw, dict):
@@ -861,26 +892,50 @@ class GatewayHTTPHandler:
             role = raw.get("role")
             if role not in {"user", "assistant", "tool", "system"}:
                 continue
-            content = raw.get("content")
-            if isinstance(content, list):
-                content = "\n".join(
-                    str(block.get("text", ""))
-                    for block in content
-                    if isinstance(block, dict) and block.get("type") == "text"
-                )
-            if content is None:
-                content = ""
-            timestamp = raw.get("timestamp")
-            try:
-                created_at = int(datetime.fromisoformat(str(timestamp)).timestamp() * 1000)
-            except (TypeError, ValueError):
-                created_at = 0
-            messages.append({
+            if role == "tool" and raw.get("tool_call_id") in called_ids:
+                # Folded into the owning assistant message's toolEvents.
+                continue
+            message: dict[str, Any] = {
                 "id": f"channel-{index}",
                 "role": role,
-                "content": str(content),
-                "createdAt": created_at,
-            })
+                "content": text_of(raw.get("content")),
+                "createdAt": created_ms(raw),
+            }
+            reasoning = raw.get("reasoning_content")
+            if isinstance(reasoning, str) and reasoning.strip():
+                message["reasoning"] = reasoning
+            latency = raw.get("latency_ms")
+            if isinstance(latency, (int, float)) and latency:
+                message["latencyMs"] = latency
+            calls = raw.get("tool_calls")
+            if role == "assistant" and isinstance(calls, list) and calls:
+                events: list[dict[str, Any]] = []
+                for call in calls:
+                    if not isinstance(call, dict):
+                        continue
+                    call_id = call.get("id")
+                    fn = call.get("function") if isinstance(call.get("function"), dict) else {}
+                    name = str(fn.get("name") or call.get("name") or "tool")
+                    arguments = fn.get("arguments")
+                    events.append({
+                        "version": 1,
+                        "phase": "start",
+                        "call_id": call_id,
+                        "name": name,
+                        "arguments": arguments,
+                    })
+                    result = tool_results.get(call_id) if isinstance(call_id, str) else None
+                    if result is not None:
+                        events.append({
+                            "version": 1,
+                            "phase": "end",
+                            "call_id": call_id,
+                            "name": name,
+                            "result": text_of(result.get("content")),
+                        })
+                if events:
+                    message["toolEvents"] = events
+            messages.append(message)
 
         return _http_json_response({
             "schemaVersion": 1,

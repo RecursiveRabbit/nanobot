@@ -79,3 +79,51 @@ def test_channel_session_thread_synthesizes_transcript(tmp_path: Path) -> None:
     # The full transcript includes pre-watermark history (it is the log view);
     # hidden markers and commands stay out.
     assert all("Continue the active task" not in c for c in contents)
+
+
+def test_channel_thread_surfaces_reasoning_and_tool_events(tmp_path: Path) -> None:
+    handler = _handler(tmp_path)
+    manager = handler.session_manager
+    assert manager is not None
+    session = manager.get_or_create("discord:main")
+    session.add_message("user", "look around")
+    session.messages.append({
+        "role": "assistant",
+        "content": "",
+        "reasoning_content": "thinking about the workspace",
+        "tool_calls": [{
+            "id": "call-1",
+            "type": "function",
+            "function": {"name": "exec", "arguments": "{\"command\": \"ls\"}"},
+        }],
+        "timestamp": "2026-09-26T10:00:00",
+    })
+    session.messages.append({
+        "role": "tool",
+        "tool_call_id": "call-1",
+        "name": "exec",
+        "content": "file-a file-b",
+        "timestamp": "2026-09-26T10:00:01",
+    })
+    session.messages.append({
+        "role": "assistant",
+        "content": "found two files",
+        "timestamp": "2026-09-26T10:00:02",
+    })
+    manager.save(session)
+
+    request = MagicMock()
+    request.headers = {}
+    response = handler._handle_channel_session_thread(request, "discord:main")
+
+    import json
+
+    body = json.loads(bytes(response.body).decode())
+    by_role = [m for m in body["messages"]]
+    call_msg = next(m for m in by_role if m.get("toolEvents"))
+    assert call_msg["reasoning"] == "thinking about the workspace"
+    phases = [e["phase"] for e in call_msg["toolEvents"]]
+    assert phases == ["start", "end"]
+    assert call_msg["toolEvents"][1]["result"] == "file-a file-b"
+    # The folded tool record is not double-rendered as a standalone row.
+    assert not any(m["role"] == "tool" for m in by_role)

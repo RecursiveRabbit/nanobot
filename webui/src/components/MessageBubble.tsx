@@ -28,7 +28,7 @@ import { MarkdownText } from "@/components/MarkdownText";
 import { SlashCommandText } from "@/components/SlashCommandText";
 import { ReasoningRow } from "@/components/thread/activity/ReasoningRow";
 import { ContextCompactionNotice } from "@/components/thread/ContextCompactionNotice";
-import { UserMessageText } from "@/components/UserMessageText";
+import { DiscordUserMessage } from "@/components/DiscordUserMessage";
 import {
   Tooltip,
   TooltipContent,
@@ -382,7 +382,7 @@ export function MessageBubble({
     const messageText = slashCommand ? (
       <>
         <SlashCommandText command={slashCommand.command} />
-        <UserMessageText
+        <DiscordUserMessage
           text={userContent.slice(slashCommand.command.length)}
           cliApps={mentionCliApps}
           mcpPresets={mentionMcpPresets}
@@ -390,7 +390,7 @@ export function MessageBubble({
         />
       </>
     ) : (
-      <UserMessageText
+      <DiscordUserMessage
         text={userContent}
         cliApps={mentionCliApps}
         mcpPresets={mentionMcpPresets}
