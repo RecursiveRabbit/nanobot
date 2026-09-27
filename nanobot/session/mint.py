@@ -142,8 +142,13 @@ def identity() -> MintIdentity:
 
 
 def detect_subagent(session_path: Path) -> bool:
-    """Harness-side fork detection, from the session's own metadata record —
-    never from the caller, never from model-authored content."""
+    """Spawn-tool subagent detection, from the session's own metadata record
+    — never from the caller, never from model-authored content.
+
+    Per the 2026-09-27 ruling: the flag means SPAWN-TOOL sessions only (a
+    review in the parent's breath). WebUI worker forks SIGN — they diverge
+    and deliberate independently; their lineage is stamped for audit via
+    session_facts(), not flagged here."""
     try:
         with session_path.open(errors="replace") as f:
             for line in f:
@@ -158,9 +163,34 @@ def detect_subagent(session_path: Path) -> bool:
                         return True
     except OSError:
         pass
-    # WebUI forks carry no transcript marker; their lineage lives in the
-    # session index title ("Fork: ..."). The transcript filename is the
-    # base64 of the index key — decode it and look the session up.
+    return False
+
+
+def session_facts(session_path: Path) -> dict[str, Any]:
+    """Open audit facts about a session: birth time and lineage.
+
+    created_at comes from the transcript's own metadata record (or the
+    webui session index). WebUI forks are titled "Fork: ..." in the index;
+    the index records no parentage, so a fork's root is stamped "unknown"
+    — honest absence, not a guess. A non-fork's root is its own key."""
+    facts: dict[str, Any] = {"created_at": None, "fork": False,
+                             "lineage_root": None}
+    try:
+        with session_path.open(errors="replace") as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(rec, dict) and rec.get("_type") == "metadata":
+                    data = rec.get("data", rec)
+                    if isinstance(data, dict):
+                        ca = data.get("created_at") or rec.get("created_at")
+                        if isinstance(ca, str):
+                            facts["created_at"] = ca
+                    break
+    except OSError:
+        pass
     try:
         stem = session_path.stem
         key = base64.b64decode(stem + "=" * (-len(stem) % 4)).decode()
@@ -168,11 +198,16 @@ def detect_subagent(session_path: Path) -> bool:
         for entry in json.loads(idx.read_text()).get("sessions", []):
             if entry.get("key") == key:
                 title = entry.get("title") or ""
-                if title.startswith("Fork:") or entry.get("forked_from"):
-                    return True
+                facts["fork"] = title.startswith("Fork:") or bool(
+                    entry.get("forked_from"))
+                if not facts["created_at"] and entry.get("created_at"):
+                    facts["created_at"] = entry["created_at"]
+                facts["lineage_root"] = (
+                    "unknown (webui fork; parentage not indexed)"
+                    if facts["fork"] else key)
     except Exception:
         pass
-    return False
+    return facts
 
 
 def build_envelope(ident: MintIdentity, session_path: Path,
@@ -181,14 +216,19 @@ def build_envelope(ident: MintIdentity, session_path: Path,
         from nanobot import __version__
     except ImportError:
         __version__ = "unknown"
+    facts = session_facts(session_path)
     env: dict[str, Any] = {
         "harness": "nanobot",
         "harness_version": __version__,
+        "mint_version": 2,
         "cert_id": ident.cert_id,
         "session": session_path.name,
         "session_sha256": hashlib.sha256(session_path.read_bytes()).hexdigest(),
         "minted_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "subagent": bool(subagent),
+        "session_created_at": facts["created_at"],
+        "lineage_root": facts["lineage_root"],
+        "fork": facts["fork"],
         "keys": keys,
     }
     env["signature"] = base64.b64encode(ident.sign(canonical(env))).decode()
