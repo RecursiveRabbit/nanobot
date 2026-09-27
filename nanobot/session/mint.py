@@ -211,12 +211,14 @@ def session_facts(session_path: Path) -> dict[str, Any]:
 
 
 def build_envelope(ident: MintIdentity, session_path: Path,
-                   keys: dict[str, str], *, subagent: bool) -> dict[str, Any]:
+                   keys: dict[str, str], *, subagent: bool,
+                   facts: dict[str, Any] | None = None) -> dict[str, Any]:
     try:
         from nanobot import __version__
     except ImportError:
         __version__ = "unknown"
-    facts = session_facts(session_path)
+    if facts is None:
+        facts = session_facts(session_path)
     env: dict[str, Any] = {
         "harness": "nanobot",
         "harness_version": __version__,
@@ -259,8 +261,11 @@ def mint_session(session_path: Path, keys: dict[str, str],
     name = f"{session_path.parent.name}-{session_path.stem}"
     transcript_copy = outdir / f"{name}.jsonl"
     shutil.copyfile(session_path, transcript_copy)
+    # Facts (birth, lineage) come from the ORIGINAL session — the copy has
+    # no session index beside it, and its name is not the index key.
     env = build_envelope(ident, transcript_copy, keys,
-                         subagent=detect_subagent(session_path))
+                         subagent=detect_subagent(session_path),
+                         facts=session_facts(session_path))
     envelope_path = outdir / f"{name}.mint.json"
     envelope_path.write_text(json.dumps(env, indent=1) + "\n")
     logger.info("mint: {} minted as witness (cert {})", session_path.name, ident.cert_id)
