@@ -162,7 +162,8 @@ def detect_subagent(session_path: Path) -> bool:
     # session index title ("Fork: ..."). The transcript filename is the
     # base64 of the index key — decode it and look the session up.
     try:
-        key = base64.b64decode(session_path.stem.encode()).decode()
+        stem = session_path.stem
+        key = base64.b64decode(stem + "=" * (-len(stem) % 4)).decode()
         idx = session_path.parent / ".webui_session_index.json"
         for entry in json.loads(idx.read_text()).get("sessions", []):
             if entry.get("key") == key:
