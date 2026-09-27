@@ -158,6 +158,19 @@ def detect_subagent(session_path: Path) -> bool:
                         return True
     except OSError:
         pass
+    # WebUI forks carry no transcript marker; their lineage lives in the
+    # session index title ("Fork: ..."). The transcript filename is the
+    # base64 of the index key — decode it and look the session up.
+    try:
+        key = base64.b64decode(session_path.stem.encode()).decode()
+        idx = session_path.parent / ".webui_session_index.json"
+        for entry in json.loads(idx.read_text()).get("sessions", []):
+            if entry.get("key") == key:
+                title = entry.get("title") or ""
+                if title.startswith("Fork:") or entry.get("forked_from"):
+                    return True
+    except Exception:
+        pass
     return False
 
 
