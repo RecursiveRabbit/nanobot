@@ -17,29 +17,19 @@ export function RecoveryNotice({ state, onContinue, onDismiss }: RecoveryNoticeP
   const [pending, setPending] = useState<"continue" | "dismiss" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hiddenRecoveryId, setHiddenRecoveryId] = useState<string | null>(null);
-  useEffect(() => {
-    // A continuation can be interrupted again with the same recovery ID.
-    // Reveal the decision surface when the server returns to a waiting state.
-    if (state.status === "awaiting_user" || state.status === "failed") {
-      setHiddenRecoveryId(null);
-    }
-  }, [state.recovery_id, state.status]);
-  if (state.status === "recovered" || hiddenRecoveryId === state.recovery_id) return null;
+  const [autoSpentId, setAutoSpentId] = useState<string | null>(null);
 
   const waiting = state.status === "awaiting_user" || state.status === "failed";
   const contextUnavailable = state.can_continue === false;
-  const title = state.status === "failed"
-    ? t("recovery.failed", { defaultValue: "Task recovery failed" })
-    : waiting
-      ? t("recovery.interrupted", { defaultValue: "Task interrupted" })
-      : t("recovery.resuming", { defaultValue: "Restoring interrupted task…" });
-  const detail = state.status === "failed" || contextUnavailable
-    ? t("recovery.failedHelp", {
-        defaultValue: "The saved task could not be restored safely. Review it before continuing.",
-      })
-    : waiting
-      ? t("recovery.review", { defaultValue: "Review the task before continuing. Tools will not be replayed automatically." })
-      : t("recovery.safeResume", { defaultValue: "Continuing from saved conversation context." });
+  // House ruling (Evans, 2026-09-28): routine interruptions never interrupt
+  // the human. A planned restart or a blip with intact saved context just
+  // continues — the notice is a quiet status line, not a decision. The
+  // decision surface only appears when a person is genuinely needed: the
+  // recovery failed, the saved context is unavailable, or the automatic
+  // continuation itself failed (one automatic attempt per interruption).
+  const canAuto = waiting && state.status !== "failed" && !contextUnavailable;
+  const willAuto = canAuto && !error && autoSpentId !== state.recovery_id;
+
   const run = (action: "continue" | "dismiss") => {
     setPending(action);
     setError(null);
@@ -54,15 +44,47 @@ export function RecoveryNotice({ state, onContinue, onDismiss }: RecoveryNoticeP
     }).finally(() => setPending(null));
   };
 
+  useEffect(() => {
+    // A continuation can be interrupted again with the same recovery ID.
+    // Reveal the decision surface when the server returns to a waiting state
+    // after the single automatic attempt has already been spent.
+    if (state.status === "awaiting_user" || state.status === "failed") {
+      setHiddenRecoveryId(null);
+    }
+  }, [state.recovery_id, state.status]);
+
+  useEffect(() => {
+    if (!willAuto || pending !== null) return;
+    setAutoSpentId(state.recovery_id);
+    run("continue");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [willAuto, state.recovery_id]);
+
+  if (state.status === "recovered" || hiddenRecoveryId === state.recovery_id) return null;
+
+  const quiet = state.status === "resuming" || (canAuto && !error && autoSpentId !== state.recovery_id);
+  const title = state.status === "failed"
+    ? t("recovery.failed", { defaultValue: "Task recovery failed" })
+    : waiting && !quiet
+      ? t("recovery.interrupted", { defaultValue: "Task interrupted" })
+      : t("recovery.resuming", { defaultValue: "Restoring interrupted task…" });
+  const detail = state.status === "failed" || contextUnavailable
+    ? t("recovery.failedHelp", {
+        defaultValue: "The saved task could not be restored safely. Review it before continuing.",
+      })
+    : waiting && !quiet
+      ? t("recovery.review", { defaultValue: "Review the task before continuing. Tools will not be replayed automatically." })
+      : t("recovery.safeResume", { defaultValue: "Continuing from saved conversation context." });
+
   return (
     <div
-      role={waiting ? "alert" : "status"}
-      aria-live={waiting ? "assertive" : "polite"}
-      aria-busy={state.status === "resuming"}
+      role={waiting && !quiet ? "alert" : "status"}
+      aria-live={waiting && !quiet ? "assertive" : "polite"}
+      aria-busy={state.status === "resuming" || quiet}
       data-recovery-status={state.status}
       className="mx-auto mb-2 flex w-full max-w-[49.5rem] items-center gap-3 rounded-control border border-border/70 bg-muted/35 px-3 py-2 text-sm transition-[background-color,border-color,opacity,transform] duration-200 ease-out motion-reduce:transition-none animate-in fade-in-0 slide-in-from-bottom-1 duration-200 motion-reduce:animate-none"
     >
-      {waiting ? (
+      {waiting && !quiet ? (
         <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
       ) : (
         <LoaderCircle className="h-4 w-4 shrink-0 animate-spin text-primary motion-reduce:animate-none" aria-hidden />
@@ -78,7 +100,7 @@ export function RecoveryNotice({ state, onContinue, onDismiss }: RecoveryNoticeP
           {error ?? detail}
         </p>
       </div>
-      {waiting ? (
+      {waiting && !quiet ? (
         <div className="flex shrink-0 items-center gap-1.5">
           <Button
             type="button"
