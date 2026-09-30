@@ -443,6 +443,24 @@ class MemoryStore:
 
 
 
+def _narrative_view(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop tool traffic from a summary-input assembly (Evans 2026-09-29).
+
+    Tool results are the bulk and the least of the narrative; assistant
+    tool_calls go with them so no provider sees an unpaired call. The
+    stored session record is untouched — this view exists only as
+    summarizer input.
+    """
+    narrative: list[dict[str, Any]] = []
+    for message in messages:
+        if message.get("role") == "tool":
+            continue
+        if "tool_calls" in message:
+            message = {key: value for key, value in message.items() if key != "tool_calls"}
+        narrative.append(message)
+    return narrative
+
+
 class MemoryArchiver:
     """Write durable transcript batches to the Memory ingestion journal.
 
@@ -457,11 +475,13 @@ class MemoryArchiver:
         build_messages: Callable[..., list[dict[str, Any]]],
         get_tool_definitions: Callable[[], list[dict[str, Any]]],
         resolve_prompt_context: Callable[[Session], tuple[str | None, Path | None]] | None = None,
+        escalate_runtime: Callable[[int, LLMRuntime], LLMRuntime | None] | None = None,
     ) -> None:
         self.store = store
         self._build_messages = build_messages
         self._get_tool_definitions = get_tool_definitions
         self._resolve_prompt_context = resolve_prompt_context
+        self._escalate_runtime = escalate_runtime
 
 
     async def archive(
@@ -596,28 +616,18 @@ class MemoryArchiver:
         )
         previous_summary = session_summary["text"] if session_summary else None
 
-        if input_token_budget <= 0:
-            logger.warning(
-                "Memory archive has no safe input budget for {}; failing the pass",
-                session.key,
-            )
-            return None
+        # ONE READER (Evans, 2026-09-29): the summarizer consumes the
+        # session's OWN assembly — the same get_history the turn pipeline
+        # uses. A session that can process on its history is valid by
+        # definition; there is no second, stricter view to veto it. The old
+        # seam check tested the wrong truth and bricked discord:main.
         prefix = Session(
             key=session.key,
             messages=list(session.messages[:archive_end]),
             last_consolidated=session.last_archived,
         )
-        history = prefix.get_history(max_tokens=input_token_budget)
-        archive_history = Session(
-            key=session.key,
-            messages=messages,
-        ).get_history()
-        if not archive_history or history[-len(archive_history):] != archive_history:
-            logger.warning(
-                "Memory archive cannot replay the full chunk for {}; failing the pass",
-                session.key,
-            )
-            return None
+        history = _narrative_view(prefix.get_history())
+
         channel = session.key.split(":", 1)[0] if ":" in session.key else None
         workspace: Path | None = None
         if self._resolve_prompt_context is not None:
@@ -630,6 +640,43 @@ class MemoryArchiver:
             workspace=workspace,
         )
         tools = self._get_tool_definitions()
+
+        # AUTO-ESCALATE (Evans, same ruling): if the assembled input
+        # exceeds the session's own budget, the pass borrows the smallest
+        # house tier that fits. The session's pin is untouched.
+        estimated, _estimate_source = estimate_prompt_tokens_chain(
+            runtime.provider,
+            runtime.model,
+            history_messages,
+            tools,
+        )
+        if estimated > input_token_budget and self._escalate_runtime is not None:
+            escalated = self._escalate_runtime(estimated, runtime)
+            if escalated is not None:
+                escalated_budget = (
+                    escalated.context_window_tokens
+                    - max(0, escalated.generation.max_tokens)
+                    - 1024
+                )
+                if estimated <= escalated_budget:
+                    logger.info(
+                        "Memory archive escalating {} -> {} for {} (~{} tokens)",
+                        runtime.model,
+                        escalated.model,
+                        session.key,
+                        estimated,
+                    )
+                    runtime = escalated
+                    input_token_budget = escalated_budget
+        if input_token_budget <= 0 or estimated > input_token_budget:
+            logger.warning(
+                "Memory archive input does not fit any available tier for {}: ~{}/{}; failing the pass",
+                session.key,
+                estimated,
+                input_token_budget,
+            )
+            return None
+
         return await self.archive(
             messages,
             runtime=runtime,
@@ -653,6 +700,7 @@ class Consolidator:
         build_messages: Callable[..., list[dict[str, Any]]],
         get_tool_definitions: Callable[[], list[dict[str, Any]]],
         resolve_prompt_context: Callable[[Session], tuple[str | None, Path | None]] | None = None,
+        escalate_runtime: Callable[[int, LLMRuntime], LLMRuntime | None] | None = None,
     ):
         self.store = store
         self.sessions = sessions
@@ -663,6 +711,7 @@ class Consolidator:
             build_messages=build_messages,
             get_tool_definitions=get_tool_definitions,
             resolve_prompt_context=resolve_prompt_context,
+            escalate_runtime=escalate_runtime,
         )
         self._locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
             weakref.WeakValueDictionary()

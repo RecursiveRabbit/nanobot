@@ -434,6 +434,7 @@ class AgentLoop:
                 workspace_scopes=self.workspace_scopes,
                 unified_session=unified_session,
             ),
+            escalate_runtime=self._escalate_compaction_runtime,
         )
         self.auto_compact = AutoCompact(
             sessions=self.sessions,
@@ -553,6 +554,42 @@ class AgentLoop:
             session.metadata.pop(SESSION_MODEL_PRESET_METADATA_KEY, None)
             self.sessions.save(session)
             return self.llm_runtime()
+
+    def _escalate_compaction_runtime(
+        self,
+        estimated_tokens: int,
+        current: LLMRuntime,
+    ) -> LLMRuntime | None:
+        """Smallest house tier that fits a compaction's assembled input.
+
+        Evans 2026-09-29: if the session's history exceeds its tier's
+        window, the compaction pass borrows a bigger tier — the session's
+        own pin is never touched. History can only outgrow a window via a
+        tier move; escalating borrows the generating tier back.
+        """
+        candidates: list[tuple[int, str]] = []
+        for name, config in self.runtime_resolver.model_presets.items():
+            if name == "Subagents":
+                continue
+            window = getattr(config, "context_window_tokens", None) or 0
+            if window > 0:
+                candidates.append((window, name))
+        need = int(estimated_tokens * 1.15)
+        for _window, name in sorted(candidates):
+            try:
+                runtime = self.runtime_resolver.resolve_preset(name)
+            except Exception:
+                continue
+            if runtime.context_window_tokens <= current.context_window_tokens:
+                continue
+            budget = (
+                runtime.context_window_tokens
+                - max(0, runtime.generation.max_tokens)
+                - 1024
+            )
+            if budget >= need:
+                return runtime
+        return None
 
     def set_session_model_preset(
         self,

@@ -1113,15 +1113,17 @@ class TestCompactIdleSession:
         assert result == "Overview from the temporary turn."
         call = mock_provider.chat_stream_with_retry.call_args.kwargs
         sent_messages = call["messages"]
+        # The 2026-09-29 ruling: the summarizer's view drops tool traffic
+        # (results AND the calls, so no provider sees an unpaired call).
+        # The stored record keeps everything — verified below.
         assert [message["role"] for message in sent_messages] == [
             "system",
             "user",
             "assistant",
-            "tool",
             "assistant",
             "user",
         ]
-        assert sent_messages[2]["tool_calls"][0]["id"] == "call-1"
+        assert all("tool_calls" not in message for message in sent_messages)
         assert sent_messages[-1]["content"] == _ARCHIVE_PROMPT
         assert call["tools"] == tools
         assert "tool_choice" not in call
@@ -1137,6 +1139,103 @@ class TestCompactIdleSession:
         assert [entry["content"] for entry in entries] == [
             "Overview from the temporary turn."
         ]
+
+    @pytest.mark.asyncio
+    async def test_compaction_proceeds_on_crash_era_debris(
+        self,
+        store,
+        mock_provider,
+        runtime,
+    ):
+        """The 2026-09-29 ruling (one reader): a session that can process on
+        its history is compactable, full stop. Crash-era debris — error
+        stubs, consecutive user turns, interrupted markers — must not veto.
+        (This shape bricked discord:main for two days under the old seam
+        check.)
+        """
+        from nanobot.session.manager import SessionManager
+
+        sessions = SessionManager(store.workspace)
+        consolidator = Consolidator(
+            store=store,
+            sessions=sessions,
+            build_messages=MagicMock(side_effect=_build_test_messages),
+            get_tool_definitions=MagicMock(return_value=[]),
+        )
+        mock_provider.chat_stream_with_retry.return_value = LLMResponse(
+            content="Summary despite the debris.",
+            finish_reason="stop",
+        )
+        session = sessions.get_or_create("discord:main")
+        session.add_message("user", "first question")
+        session.add_message(
+            "assistant",
+            "Error: Task interrupted before a response was generated.",
+            _recovery_interrupted=True,
+        )
+        session.add_message("user", "second question nobody answered")
+        session.add_message("user", "and a third, queued behind it")
+        session.add_message("assistant", "final clean answer")
+        sessions.save(session)
+
+        result = await consolidator.compact_idle_session("discord:main", runtime=runtime)
+
+        assert result == "Summary despite the debris."
+        entries = store.read_unprocessed_history(since_cursor=0)
+        assert [entry["content"] for entry in entries] == ["Summary despite the debris."]
+
+    @pytest.mark.asyncio
+    async def test_compaction_escalates_runtime_when_input_exceeds_budget(
+        self,
+        store,
+        mock_provider,
+        runtime,
+    ):
+        """The 2026-09-29 ruling (auto-escalate): when the assembled input
+        exceeds the session's own budget, the pass borrows a fitting tier —
+        the session's pin is untouched. (discord:main's 471 budget deaths.)
+        """
+        from nanobot.session.manager import SessionManager
+
+        sessions = SessionManager(store.workspace)
+        # This class's runtime fixture has a 128k window; force the squeeze
+        # with an explicit small one.
+        small_runtime = LLMRuntime.capture(
+            mock_provider,
+            "test-model",
+            context_window_tokens=1000,
+        )
+        big_runtime = LLMRuntime.capture(
+            mock_provider,
+            "test-model-xl",
+            context_window_tokens=1_000_000,
+        )
+        escalator = MagicMock(return_value=big_runtime)
+        consolidator = Consolidator(
+            store=store,
+            sessions=sessions,
+            build_messages=MagicMock(side_effect=_build_test_messages),
+            get_tool_definitions=MagicMock(return_value=[]),
+            escalate_runtime=escalator,
+        )
+        mock_provider.chat_stream_with_retry.return_value = LLMResponse(
+            content="Summary from the borrowed tier.",
+            finish_reason="stop",
+        )
+        session = sessions.get_or_create("discord:big")
+        # 1000-token window; overflow it comfortably.
+        session.add_message("user", "x " * 3000)
+        session.add_message("assistant", "y " * 3000)
+        sessions.save(session)
+
+        result = await consolidator.compact_idle_session("discord:big", runtime=small_runtime)
+
+        assert result == "Summary from the borrowed tier."
+        escalator.assert_called_once()
+        call = mock_provider.chat_stream_with_retry.call_args
+        sent_model = call.kwargs.get("model")
+        assert sent_model == "test-model-xl"
+        assert sessions.get_or_create("discord:big").metadata.get("_nanobot_model_preset") is None
 
     @pytest.mark.asyncio
     async def test_tool_call_response_fails_the_pass(
