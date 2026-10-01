@@ -1,43 +1,16 @@
 # Tool Usage Notes
 
-## General Tool Contract
-
-- Use the narrowest structured tool that directly matches the task.
-- Use read-only discovery before writes when state is uncertain.
-- Do not use `exec` as a universal workaround for files, search, web, messages, or schedules.
-- If a tool fails, read the error, refresh the relevant state, and retry with a different approach instead of repeating the same call.
-- After meaningful changes, verify the result with the smallest reliable check: re-read changed state, run targeted tests, or inspect command output.
-- When tools are needed before answering, do not include the final answer with the tool calls. Wait for the tool results, then answer once.
-- Respect safety and workspace-boundary errors as real limits, not obstacles to bypass.
-- Treat a clear user request as authorization to complete it in the current turn.
-- For multi-step tasks, outline the plan briefly and then execute it. Wait only when an
-  irreversible action needs confirmation or an essential choice cannot be resolved from the
-  available context and tools.
-- For coding and technical tasks, continue through implementation and verification; do not
-  stop at a plan, diagnosis, or plausible-looking output.
-
 ## Discovery and Reading
 
-- Use `find_files` or `list_dir` for uncertain paths, `grep` for content, and `read_file` for a known path.
-- `grep` returns matches with five context lines by default; use `files_with_matches` for paths or `count` for totals.
-- Use `fixed_strings=true` for literal keywords containing regex characters.
-- Use `head_limit` and `offset` to page across large result sets.
+- You can use `find_files` or `list_dir` for uncertain paths, `grep` for content, and `read_file` for a known path.
+- In this harness, `grep` returns matches with five context lines by default; use `files_with_matches` for paths or `count` for totals.
+- You can use `fixed_strings=true` for literal keywords containing regex characters.
+- You can use `head_limit` and `offset` to page across large result sets.
 - Search tools enforce binary and file-size limits and report skipped files in the result.
 
 ## File and Coding Workflows
 
 - For code or config changes, the default loop is: locate (`find_files`/`grep`), inspect (`read_file`), edit (`apply_patch`), then verify (`exec` or re-read).
-- Translate the user's acceptance criteria into concrete checks before editing. After the
-  implementation, run those checks and inspect the final diff or artifact; do not substitute
-  a plausible explanation for verification.
-- For binary, numerical, and visual artifacts, create a deterministic inspectable
-  representation when useful. Render plots or images to PNG and call `read_file` on them so
-  visual evidence reaches the model; do not guess text, measurements, or recovered data.
-- When interpreting composite artifacts, use available format metadata, layers, identifiers,
-  timestamps, or semantic sections to isolate the requested content instead of guessing from
-  visual prominence.
-- Never invent missing records or measurements. When repairing an artifact, validate the
-  result with its original consumer or checker when one is available.
 - Use `apply_patch` as the default code editing tool, especially for multi-file changes, structural edits, generated code, moves, adds, or deletes.
 - Use `apply_patch dry_run=true` when the patch is uncertain and you want validation plus a change summary before writing.
 - Use `edit_file` only for small exact replacements in one file, with `old_text` copied from `read_file`.
@@ -52,26 +25,24 @@
 
 ## CLI App Attachments
 
-- When Runtime Context lists a `CLI App Attachment` or `CLI App Mention`, treat the `@name` as an app capability the user intentionally attached to the current turn.
-- If the task may need app-specific behavior, read the listed skill first, then call `run_cli_app` with that `name`.
-- Do not run an attached CLI app through shell or generic process tools unless the user explicitly asks for that lower-level path.
-- If the app CLI is missing, lacks local desktop/app/API prerequisites, or cannot complete the requested action, explain that concrete blocker and what was attempted.
+- When Runtime Context lists a `CLI App Attachment` or `CLI App Mention`, that means `@name` is an app capability the user intentionally attached to the current turn, consider it a suggestion.
+- Skills contain information on how to use your tools, read the listed skill first, then call `run_cli_app` with that `name`.
+- If the app CLI is missing, lacks local desktop/app/API prerequisites, or cannot complete the requested action, ping the user. This is not a test environment. Your tools are intended to work.
 
 ## Web and External Information
 
-- Use web tools when the user asks for current information, a specific URL, or information likely to have changed.
-- Use `web_search` to find sources and `web_fetch` for a specific page or result that needs closer reading.
-- Do not invent freshness-sensitive facts when tools can verify them.
+- You can use web tools for current information, a specific URL, or information likely to have changed.
+- You can use `web_search` to find sources and `web_fetch` for a specific page or result that needs closer reading.
+- Web searches are free. You never look silly for checking, but you sometimes look silly for trusting your memory.
 
 ## Messaging and Media
 
-- Reply directly with text for the current conversation. Do not use the 'message' tool for normal replies in the current chat.
-- Use `message` only for proactive sends, cross-channel delivery, or delivering existing local files and generated images through its `media` parameter.
+- You can reply directly with text for the current conversation. You don’t have to use the 'message' tool for normal replies in the current chat.
+- The `message` tool is for proactive sends, cross-channel delivery, or delivering existing local files and generated images through its `media` parameter.
 - `read_file` only reads content for analysis; it does not deliver a file to the user.
-- When 'generate_image' creates images, call 'message' with the artifact paths in the 'media' parameter.
+- If you use 'generate_image' to create images, you can call 'message' with the artifact paths in the 'media' parameter to show the user.
 
 ## Scheduling and Background Work
 
 - Use `cron` for scheduled reminders or recurring jobs; do not run `nanobot cron` through `exec`.
 - For heartbeat tasks, update `HEARTBEAT.md`; the default gateway heartbeat cron job handles periodic checks when enabled.
-- Do not write reminders only to memory files when the user expects an actual notification.

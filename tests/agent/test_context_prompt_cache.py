@@ -110,8 +110,8 @@ def test_provider_context_appended_after_user_content(tmp_path) -> None:
     assert user_pos < context_pos, "user content must precede provider context"
 
 
-def test_execution_rules_in_system_prompt(tmp_path) -> None:
-    """Execution rules should appear in the system prompt via the default templates."""
+def test_evans_draft_tool_notes_in_system_prompt(tmp_path) -> None:
+    """Evans' 2026-09-29 draft: slim tool notes, no General Tool Contract."""
     from nanobot.utils.helpers import sync_workspace_templates
 
     workspace = _make_workspace(tmp_path)
@@ -119,14 +119,14 @@ def test_execution_rules_in_system_prompt(tmp_path) -> None:
     builder = ContextBuilder(workspace)
 
     prompt = builder.build_system_prompt()
-    assert "clear user request" in prompt
-    assert "multi-step tasks" in prompt
-    assert "read-only discovery before writes" in prompt
-    assert "verify the result" in prompt
+    assert "## General Tool Contract" not in prompt
+    assert "## Discovery and Reading" in prompt
+    assert "Web searches are free" in prompt
+    assert "Your tools are intended to work" in prompt
 
 
-def test_execution_rules_reach_existing_workspace_soul(tmp_path) -> None:
-    """An untouched legacy SOUL is upgraded in memory without overwriting the file."""
+def test_legacy_workspace_soul_is_upgraded_in_memory(tmp_path) -> None:
+    """An untouched legacy SOUL is swapped for the default in memory, file untouched."""
     workspace = _make_workspace(tmp_path)
     legacy_soul = (
         pkg_files("nanobot") / "templates" / "legacy" / "SOUL.md"
@@ -137,25 +137,11 @@ def test_execution_rules_reach_existing_workspace_soul(tmp_path) -> None:
     builder = ContextBuilder(workspace)
 
     prompt = builder.build_system_prompt()
-    current_rule = "Treat a clear user request as authorization"
+    default_soul_line = "Solve by doing, not by describing what I would do."
 
     assert legacy_rule not in prompt
-    assert current_rule in prompt
+    assert default_soul_line in prompt
     assert soul_path.read_text(encoding="utf-8") == legacy_soul
-
-
-def test_default_soul_template_keeps_execution_policy_in_tool_contract() -> None:
-    """SOUL owns personality while the always-injected contract owns execution policy."""
-    soul = (pkg_files("nanobot") / "templates" / "SOUL.md").read_text(encoding="utf-8")
-    contract = (
-        pkg_files("nanobot") / "templates" / "agent" / "tool_contract.md"
-    ).read_text(encoding="utf-8")
-
-    assert "## Execution Rules" not in soul
-    assert "clear user request" not in soul
-    assert "clear user request" in contract
-    assert "multi-step tasks" in contract
-    assert "irreversible action needs confirmation" in contract
 
 
 def test_channel_format_hint_telegram(tmp_path) -> None:
@@ -210,23 +196,21 @@ def test_system_prompt_keeps_message_tool_out_of_current_chat_replies(tmp_path) 
 
     prompt = builder.build_system_prompt(channel="slack")
 
-    assert "Do not use the 'message' tool for normal replies in the current chat" in prompt
-    assert "When 'generate_image' creates images" in prompt
+    assert "You don’t have to use the 'message' tool for normal replies in the current chat" in prompt
+    assert "If you use 'generate_image' to create images" in prompt
     assert "call 'message' with the artifact paths in the 'media' parameter" in prompt
-    assert "Wait for the tool results, then answer once" in prompt
 
 
-def test_memory_skill_is_lazy_loaded_from_skills_index(tmp_path) -> None:
-    """Memory search guidance should be discoverable without loading its full body."""
+def test_cron_skill_is_lazy_loaded_from_skills_index(tmp_path) -> None:
+    """Skill guidance should be discoverable without loading the skill's full body."""
     workspace = _make_workspace(tmp_path)
     builder = ContextBuilder(workspace)
 
     prompt = builder.build_system_prompt()
 
-    assert "### Skill: memory" not in prompt
-    assert "**memory**" in prompt
-    assert "Search Past Events" not in prompt
-    assert "Examples (replace `keyword`)" not in prompt
+    assert "### Skill: cron" not in prompt
+    assert "**cron**" in prompt
+    assert "every_seconds=1200" not in prompt
 
 
 def test_fresh_workspace_omits_default_prompt_scaffolding(tmp_path) -> None:
@@ -241,7 +225,7 @@ def test_fresh_workspace_omits_default_prompt_scaffolding(tmp_path) -> None:
     assert "## USER.md" not in prompt
     assert "8281248569" not in prompt
     assert "(your name)" not in prompt
-    assert prompt.count("Do not use the 'message' tool for normal replies") == 1
+    assert prompt.count("You don’t have to use the 'message' tool for normal replies") == 1
 
 
 def test_template_memory_md_is_skipped(tmp_path) -> None:

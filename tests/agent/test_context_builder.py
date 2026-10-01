@@ -210,22 +210,25 @@ class TestIsTemplateContent:
 
 
 class TestBundledToolContract:
-    def test_tool_contract_balances_general_and_coding_workflows(self):
+    def test_tool_contract_matches_evans_2026_09_29_draft(self):
+        # Evans' draft (delivered in-session 2026-09-29, installed 2026-10-01):
+        # slimmer contract — General Tool Contract and the verification
+        # clauses are OUT; softer phrasing is IN. Guard the draft's shape.
         from importlib.resources import files as pkg_files
 
         tpl = pkg_files("nanobot") / "templates" / "agent" / "tool_contract.md"
         content = tpl.read_text(encoding="utf-8")
 
-        assert "## General Tool Contract" in content
-        assert "Use the narrowest structured tool" in content
-        assert "Do not use `exec` as a universal workaround" in content
+        assert "## General Tool Contract" not in content
+        assert "## Discovery and Reading" in content
+        assert "In this harness, `grep` returns matches with five context lines" in content
         assert "## File and Coding Workflows" in content
-        assert "`grep` returns matches with five context lines by default" in content
         assert "apply_patch" in content
-        assert "acceptance criteria into concrete checks" in content
-        assert "visual evidence reaches the model" in content
-        assert "clear user request as authorization" in content
-        assert "Never invent missing records or measurements" in content
+        assert "acceptance criteria into concrete checks" not in content
+        assert "visual evidence reaches the model" not in content
+        assert "Never invent missing records or measurements" not in content
+        assert "Web searches are free" in content
+        assert "Your tools are intended to work" in content
         assert "## Web and External Information" in content
         assert "## Messaging and Media" in content
         assert "## Scheduling and Background Work" in content
@@ -235,8 +238,8 @@ class TestBundledToolContract:
         prompt = builder.build_system_prompt()
 
         assert "# Tool Usage Notes" in prompt
-        assert "## General Tool Contract" in prompt
-        assert "Do not use `exec` as a universal workaround" in prompt
+        assert "## General Tool Contract" not in prompt
+        assert "## Discovery and Reading" in prompt
 
 
 # ---------------------------------------------------------------------------
