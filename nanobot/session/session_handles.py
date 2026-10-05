@@ -12,6 +12,7 @@ from typing import Any, TypedDict, cast
 from nanobot.session.manager import SessionManager
 
 SESSION_HANDLE_METADATA_KEY = "session_handle"
+_DELIVERY_ONLY_METADATA_KEY = "_delivery_only"
 
 _MAX_SESSION_KEY_CHARS = 512
 _MAX_HANDLE_CHARS = 16
@@ -143,11 +144,38 @@ def _allocate_name(used: set[str]) -> str:
             return name
 
 
+def _is_delivery_only_session(messages: list[dict[str, Any]]) -> bool:
+    """True when every visible message is an outbound channel-delivery receipt.
+
+    A session that has never received a user turn is not a resident; it is
+    a persistence artifact from the message tool. Such sessions must not
+    mint handles in the roster.
+    """
+    if not messages:
+        return False
+    for msg in messages:
+        role = msg.get("role")
+        if role == "user":
+            return False
+        if role != "assistant":
+            return False
+        if not msg.get("_channel_delivery"):
+            return False
+    return True
+
+
 class SessionHandleResolver:
     """Allocate and resolve handles stored in canonical session metadata."""
 
     def __init__(self, sessions: SessionManager) -> None:
         self._sessions = sessions
+
+    def _is_delivery_only(self, key: str) -> bool:
+        payload = self._sessions.read_session_file(key)
+        if payload is None:
+            return False
+        messages = payload.get("messages") or []
+        return _is_delivery_only_session(messages)
 
     def _ensure_all(self) -> dict[str, SessionHandle]:
         with self._sessions.locked_session_files():
@@ -172,6 +200,27 @@ class SessionHandleResolver:
                     if isinstance(raw_metadata, dict)
                     else {}
                 )
+
+                # HOUSE LAW: delivery-only artifacts do not mint handles.
+                flagged = metadata.get(_DELIVERY_ONLY_METADATA_KEY)
+                if flagged:
+                    if not self._is_delivery_only(raw_key):
+                        # Session has come alive since it was flagged; clear it.
+                        self._sessions.update_session_metadata(
+                            raw_key,
+                            {_DELIVERY_ONLY_METADATA_KEY: False},
+                        )
+                    else:
+                        continue
+                elif self._is_delivery_only(raw_key):
+                    # First time seeing a ghost; flag it and withhold a handle.
+                    self._sessions.update_session_metadata(
+                        raw_key,
+                        {_DELIVERY_ONLY_METADATA_KEY: True,
+                         SESSION_HANDLE_METADATA_KEY: ""},
+                    )
+                    continue
+
                 raw_name = metadata.get(SESSION_HANDLE_METADATA_KEY)
                 try:
                     name = normalize_session_handle(raw_name) if isinstance(raw_name, str) else ""
@@ -184,6 +233,13 @@ class SessionHandleResolver:
                 used.add(name)
 
             for key in pending:
+                if self._is_delivery_only(key):
+                    self._sessions.update_session_metadata(
+                        key,
+                        {_DELIVERY_ONLY_METADATA_KEY: True},
+                        fsync=True,
+                    )
+                    continue
                 name = _allocate_name(used)
                 if not self._sessions.update_session_metadata(
                     key,

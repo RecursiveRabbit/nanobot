@@ -70,7 +70,7 @@ class MessageTool(Tool):
 
     def __init__(
         self,
-        send_callback: Callable[[OutboundMessage], Awaitable[None]] | None = None,
+        send_callback: Callable[[OutboundMessage], Awaitable[Any]] | None = None,
         default_channel: str = "",
         default_chat_id: str = "",
         default_message_id: str | None = None,
@@ -100,7 +100,7 @@ class MessageTool(Tool):
             restrict_to_workspace=ctx.config.restrict_to_workspace,
         )
 
-    def set_send_callback(self, callback: Callable[[OutboundMessage], Awaitable[None]]) -> None:
+    def set_send_callback(self, callback: Callable[[OutboundMessage], Awaitable[Any]]) -> None:
         """Set the callback for sending messages."""
         self._send_callback = callback
 
@@ -247,17 +247,24 @@ class MessageTool(Tool):
             logger.debug("MessageTool: delivery suppressed during internal check")
             return f"Message acknowledged for {channel}:{chat_id} (not delivered)"
 
+        media_info = f" with {len(media)} attachments" if media else ""
+        button_info = (
+            f" with {sum(len(row) for row in button_rows)} button(s)"
+            if button_rows
+            else ""
+        )
+
         try:
-            await self._send_callback(msg)
-            sends = _CURRENT_MESSAGE_SENDS.get()
-            if sends is not None:
-                sends.add((channel, chat_id))
-            media_info = f" with {len(media)} attachments" if media else ""
-            button_info = (
-                f" with {sum(len(row) for row in button_rows)} button(s)"
-                if button_rows
-                else ""
-            )
-            return f"Message sent to {channel}:{chat_id}{media_info}{button_info}"
+            callback_result = await self._send_callback(msg)
         except Exception as e:
             return ToolResult.error(f"Error sending message: {str(e)}")
+
+        sends = _CURRENT_MESSAGE_SENDS.get()
+        if sends is not None:
+            sends.add((channel, chat_id))
+
+        # A gateway-aware callback returns an explicit status string
+        # (queued / delivered / failed). Generic bus callbacks return None.
+        if isinstance(callback_result, str):
+            return callback_result
+        return f"Message sent to {channel}:{chat_id}{media_info}{button_info}"

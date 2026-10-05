@@ -1,5 +1,6 @@
 """Event types for the message bus."""
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
@@ -66,3 +67,4 @@ class OutboundMessage:
     metadata: dict[str, Any] = field(default_factory=dict)
     buttons: list[list[str]] = field(default_factory=list)
     event: "AgentEvent | None" = None
+    delivery_future: asyncio.Future[None] | None = None

@@ -273,14 +273,30 @@ if DISCORD_AVAILABLE:
                     return
 
             channel_id = int(msg.chat_id)
-
             channel = self._channel._known_channels.get(msg.chat_id) or self.get_channel(channel_id)
+            fetch_error: Exception | None = None
             if channel is None:
                 try:
                     channel = await self.fetch_channel(channel_id)
                 except Exception as e:
-                    self._channel.logger.warning("channel {} unavailable: {}", msg.chat_id, e)
-                    raise
+                    fetch_error = e
+            if channel is None:
+                # Proactive DM: chat_id may be a user id. Open a DM and cache it.
+                try:
+                    user = await self.fetch_user(channel_id)
+                    dm = await user.create_dm()
+                    self._channel._known_channels[msg.chat_id] = dm
+                    channel = dm
+                except Exception as e:
+                    self._channel.logger.warning(
+                        "DM resolution failed for {}: {}", msg.chat_id, e
+                    )
+                    if fetch_error is not None:
+                        raise fetch_error
+            if channel is None:
+                raise RuntimeError(
+                    f"Discord target {msg.chat_id} is not a reachable channel or user"
+                )
 
             messageable_channel = cast(Messageable, channel)
             reference, mention_settings = self._build_reply_context(messageable_channel, msg.reply_to)
@@ -674,9 +690,9 @@ class DiscordChannel(BaseChannel):
         await self._handle_discord_message(message)
 
     async def _resolve_channel(self, chat_id: str) -> Any | None:
-        """Resolve a Discord channel from cache first, then network fetch."""
+        """Resolve a Discord channel or DM from cache, fetch, or user create."""
         client = self._client
-        if client is None or not client.is_ready():
+        if client is None:
             return None
         channel = self._known_channels.get(chat_id)
         if channel is not None:
@@ -687,8 +703,17 @@ class DiscordChannel(BaseChannel):
             return channel
         try:
             return await client.fetch_channel(channel_id)
+        except Exception:
+            pass
+        # Fallback: the chat_id may be a user id. Open a DM and cache it
+        # under the user id so proactive DMs keep working.
+        try:
+            user = await client.fetch_user(channel_id)
+            dm = await user.create_dm()
+            self._known_channels[chat_id] = dm
+            return dm
         except Exception as e:
-            self.logger.warning("channel {} unavailable: {}", chat_id, e)
+            self.logger.warning("DM resolution failed for {}: {}", chat_id, e)
             return None
 
     async def _finalize_stream(

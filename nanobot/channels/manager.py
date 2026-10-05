@@ -753,8 +753,14 @@ class ChannelManager:
             if self._outbound_tails.get(key) is done:
                 self._outbound_tails.pop(key, None)
             self._outbound_slots.release()
+            future = msg.delivery_future
             if not done.cancelled() and (error := done.exception()) is not None:
                 logger.error("Outbound delivery to {}:{} failed: {}", *key, error)
+                if future is not None and not future.done():
+                    future.set_exception(error)
+            else:
+                if future is not None and not future.done():
+                    future.set_result(None)
 
         task.add_done_callback(finished)
 

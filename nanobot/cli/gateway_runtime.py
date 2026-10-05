@@ -507,6 +507,13 @@ def _run_gateway(
     from nanobot.session.keys import session_key_for_channel
 
     def _channel_session_key(channel: str, chat_id: str) -> str:
+        # Evans 2026-10-05: discord.unifySession must actually unify Discord.
+        if channel == "discord":
+            discord_cfg = getattr(config.channels, "discord", None)
+            if discord_cfg is None:
+                discord_cfg = config.channels.model_extra.get("discord") if hasattr(config.channels, "model_extra") else None
+            if isinstance(discord_cfg, dict) and discord_cfg.get("unifySession"):
+                return "discord:main"
         return session_key_for_channel(
             channel,
             chat_id,
@@ -515,10 +522,24 @@ def _run_gateway(
 
     async def _deliver_to_channel(
         msg: OutboundMessage, *, record: bool = False, session_key: str | None = None,
-    ) -> None:
-        """Publish a user-visible message and mirror it into that channel's session."""
+    ) -> str:
+        """Publish a user-visible message and mirror it into that channel's session.
+
+        Returns a status string the message tool can surface instead of the
+        old unconditional "Message sent" lie.
+        """
         metadata = dict(msg.metadata or {})
         record = record or bool(metadata.pop("_record_channel_delivery", False))
+
+        # Attach a delivery confirmation future so the message tool can report
+        # queued / delivered / failed honestly.
+        delivery_future: asyncio.Future[None] | None = None
+        try:
+            delivery_future = asyncio.get_running_loop().create_future()
+        except RuntimeError:
+            pass
+        msg.delivery_future = delivery_future
+
         if metadata != (msg.metadata or {}):
             msg = OutboundMessage(
                 channel=msg.channel,
@@ -528,22 +549,44 @@ def _run_gateway(
                 media=msg.media,
                 metadata=metadata,
                 buttons=msg.buttons,
+                delivery_future=delivery_future,
             )
+
         if (
             record
             and msg.channel != "cli"
             and msg.content.strip()
+            and hasattr(session_manager, "read_session_file")
             and hasattr(session_manager, "get_or_create")
             and hasattr(session_manager, "save")
         ):
             key = session_key or _channel_session_key(msg.channel, msg.chat_id)
-            session = session_manager.get_or_create(key)
-            extra: dict[str, Any] = {"_channel_delivery": True}
-            if msg.media:
-                extra["media"] = list(msg.media)
-            session.add_message("assistant", msg.content, **extra)
-            session_manager.save(session)
+            # HOUSE LAW: do not mint a delivery-only session. Only mirror the
+            # outbound into a session that already has a living user turn.
+            existing = session_manager.read_session_file(key)
+            has_user = any(
+                m.get("role") == "user"
+                for m in (existing.get("messages") if existing else [])
+            )
+            if has_user:
+                session = session_manager.get_or_create(key)
+                extra: dict[str, Any] = {"_channel_delivery": True}
+                if msg.media:
+                    extra["media"] = list(msg.media)
+                session.add_message("assistant", msg.content, **extra)
+                session_manager.save(session)
+
         await bus.publish_outbound(msg)
+
+        if delivery_future is None:
+            return f"Message queued for {msg.channel}:{msg.chat_id}"
+        try:
+            await asyncio.wait_for(delivery_future, timeout=60.0)
+            return f"Message delivered to {msg.channel}:{msg.chat_id}"
+        except asyncio.TimeoutError:
+            return f"Message queued for {msg.channel}:{msg.chat_id} (delivery not confirmed)"
+        except Exception as e:
+            return f"Error delivering message to {msg.channel}:{msg.chat_id}: {e}"
 
     message_tool = agent.tools.get("message")
     if isinstance(message_tool, MessageTool):
