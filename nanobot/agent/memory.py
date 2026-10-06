@@ -16,19 +16,20 @@ import weakref
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterator, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Iterator, cast
 from uuid import uuid4
 
 from loguru import logger
 
 from nanobot.events import NO_EVENTS, ContextCompactionEvent, EventSink
 from nanobot.llm_usage.context import llm_usage_source
-from nanobot.providers.base import ProviderCallContext, ProviderConversationState
+from nanobot.providers.base import ProviderCallContext, ProviderConversationState, ToolCallRequest
 from nanobot.runtime_context import public_history_messages
 from nanobot.session.manager import Session, SessionManager
 from nanobot.session.summary import is_summary_checkpoint, session_summary_from_metadata
 from nanobot.utils.gitstore import GitStore
 from nanobot.utils.helpers import (
+    build_assistant_message,
     content_with_media_breadcrumbs,
     ensure_dir,
     estimate_prompt_tokens_chain,
@@ -469,6 +470,10 @@ class MemoryArchiver:
     provider continuation state or advance a session watermark.
     """
 
+    # Bound on the fold's tool loop: a pass that cannot close its notes
+    # within this many rounds of tool use fails instead of running away.
+    _MAX_TOOL_ROUNDS = 12
+
     def __init__(
         self,
         store: MemoryStore,
@@ -476,12 +481,16 @@ class MemoryArchiver:
         get_tool_definitions: Callable[[], list[dict[str, Any]]],
         resolve_prompt_context: Callable[[Session], tuple[str | None, Path | None]] | None = None,
         escalate_runtime: Callable[[int, LLMRuntime], LLMRuntime | None] | None = None,
+        execute_archive_tools: Callable[
+            [Session, LLMRuntime, list[ToolCallRequest]], Awaitable[list[Any]]
+        ] | None = None,
     ) -> None:
         self.store = store
         self._build_messages = build_messages
         self._get_tool_definitions = get_tool_definitions
         self._resolve_prompt_context = resolve_prompt_context
         self._escalate_runtime = escalate_runtime
+        self._execute_archive_tools = execute_archive_tools
 
 
     async def archive(
@@ -496,6 +505,7 @@ class MemoryArchiver:
         input_token_budget: int | None = None,
         fallback_max_tokens: int | None = None,
         provider_state: ProviderConversationState | None = None,
+        execute_tools: Callable[[list[ToolCallRequest]], Awaitable[list[Any]]] | None = None,
     ) -> str | None:
         """Append the archive prompt to H and persist its summary."""
         if not source_messages:
@@ -556,9 +566,9 @@ class MemoryArchiver:
                 )
                 return None
 
-        try:
+        async def _call_provider() -> Any:
             with llm_usage_source("system"):
-                response = await runtime.provider.chat_stream_with_retry(
+                return await runtime.provider.chat_stream_with_retry(
                     model=runtime.model,
                     messages=request_messages,
                     tools=call_tools,
@@ -567,18 +577,64 @@ class MemoryArchiver:
                     reasoning_effort=runtime.generation.reasoning_effort,
                     provider_context=provider_context,
                 )
+
+        try:
+            response = await _call_provider()
         except Exception:
             logger.warning("Memory archive provider call failed; failing the pass")
             return None
-        if response.finish_reason in {"error", "length"}:
-            logger.warning(
-                "Memory archive provider did not complete ({}); failing the pass",
-                response.finish_reason,
-            )
-            return None
-        if response.has_tool_calls is True:
-            logger.warning("Memory archive provider returned tool calls; failing the pass")
-            return None
+
+        # The fold is the agent tidying its own desk (Evans, 2026-10-06):
+        # tool calls during the archive pass are intended — writing notes to
+        # disk is the point. The pass loops until the model closes with plain
+        # text; only that closing text may become the checkpoint. Passes wired
+        # without an executor (mid-turn governor summaries) keep the old
+        # contract: a tool-call response fails the pass.
+        tool_round = 0
+        while True:
+            if response.finish_reason in {"error", "length"}:
+                logger.warning(
+                    "Memory archive provider did not complete ({}); failing the pass",
+                    response.finish_reason,
+                )
+                return None
+            if response.has_tool_calls is not True:
+                break
+            if execute_tools is None:
+                logger.warning(
+                    "Memory archive provider returned tool calls without a tool executor; failing the pass"
+                )
+                return None
+            tool_round += 1
+            if tool_round > self._MAX_TOOL_ROUNDS:
+                logger.warning(
+                    "Memory archive exceeded {} tool rounds; failing the pass",
+                    self._MAX_TOOL_ROUNDS,
+                )
+                return None
+            tool_calls = list(response.tool_calls or [])
+            request_messages.append(build_assistant_message(
+                response.content,
+                tool_calls=[call.to_openai_tool_call() for call in tool_calls],
+            ))
+            try:
+                results = await execute_tools(tool_calls)
+            except Exception:
+                logger.warning("Memory archive tool execution failed; failing the pass")
+                return None
+            for call, result in zip(tool_calls, results):
+                request_messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "name": call.name,
+                    "content": result if isinstance(result, str) else str(result),
+                })
+            try:
+                response = await _call_provider()
+            except Exception:
+                logger.warning("Memory archive provider call failed; failing the pass")
+                return None
+
         summary = response.content
         if not summary or not summary.strip():
             logger.warning("Memory archive provider returned no summary; failing the pass")
@@ -677,6 +733,18 @@ class MemoryArchiver:
             )
             return None
 
+        # Idle folds run with live tools (Evans, 2026-10-06); bind the
+        # executor to this session and the post-escalation runtime.
+        execute_tools: Callable[[list[ToolCallRequest]], Awaitable[list[Any]]] | None = None
+        if self._execute_archive_tools is not None:
+            fold_session, fold_runtime = session, runtime
+
+            async def _bound_execute(tool_calls: list[ToolCallRequest]) -> list[Any]:
+                assert self._execute_archive_tools is not None
+                return await self._execute_archive_tools(fold_session, fold_runtime, tool_calls)
+
+            execute_tools = _bound_execute
+
         return await self.archive(
             messages,
             runtime=runtime,
@@ -685,6 +753,7 @@ class MemoryArchiver:
             request_tools=tools,
             previous_summary=previous_summary,
             input_token_budget=input_token_budget,
+            execute_tools=execute_tools,
         )
 
 
@@ -701,6 +770,9 @@ class Consolidator:
         get_tool_definitions: Callable[[], list[dict[str, Any]]],
         resolve_prompt_context: Callable[[Session], tuple[str | None, Path | None]] | None = None,
         escalate_runtime: Callable[[int, LLMRuntime], LLMRuntime | None] | None = None,
+        execute_archive_tools: Callable[
+            [Session, LLMRuntime, list[ToolCallRequest]], Awaitable[list[Any]]
+        ] | None = None,
     ):
         self.store = store
         self.sessions = sessions
@@ -712,6 +784,7 @@ class Consolidator:
             get_tool_definitions=get_tool_definitions,
             resolve_prompt_context=resolve_prompt_context,
             escalate_runtime=escalate_runtime,
+            execute_archive_tools=execute_archive_tools,
         )
         self._locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
             weakref.WeakValueDictionary()

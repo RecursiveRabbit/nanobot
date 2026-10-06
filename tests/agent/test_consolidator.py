@@ -7,6 +7,7 @@ import pytest
 
 from nanobot.agent.memory import (
     Consolidator,
+    MemoryArchiver,
     MemoryStore,
 )
 from nanobot.events import AgentEvent, ContextCompactionEvent, EventSink
@@ -1245,6 +1246,8 @@ class TestCompactIdleSession:
         store,
         runtime,
     ):
+        # No executor wired: the mid-turn contract still applies — a
+        # tool-call response the pass cannot execute fails the pass.
         mock_provider.chat_stream_with_retry.return_value = LLMResponse(
             content=None,
             tool_calls=[ToolCallRequest(id="call-1", name="lookup", arguments={})],
@@ -1265,6 +1268,116 @@ class TestCompactIdleSession:
         entries = store.read_unprocessed_history(since_cursor=0)
         assert len(entries) == 0
         assert sessions.get_or_create("cli:unexpected-tool").last_archived == 0
+
+    @staticmethod
+    def _consolidator_with_executor(store, executor):
+        """A Consolidator whose fold passes may execute tool calls."""
+        from nanobot.session.manager import SessionManager
+
+        return Consolidator(
+            store=store,
+            sessions=SessionManager(store.workspace),
+            build_messages=MagicMock(side_effect=_build_test_messages),
+            get_tool_definitions=MagicMock(return_value=[]),
+            execute_archive_tools=executor,
+        )
+
+    @staticmethod
+    def _seed_session(consolidator, key):
+        sessions = consolidator.sessions
+        session = sessions.get_or_create(key)
+        session.add_message("user", "remember this")
+        session.add_message("assistant", "important answer")
+        sessions.save(session)
+
+    @pytest.mark.asyncio
+    async def test_tool_calls_execute_and_close_the_pass(
+        self,
+        store,
+        mock_provider,
+        runtime,
+    ):
+        # Evans, 2026-10-06: tools during the fold are intended. The model
+        # writes to disk, then closes with the notes as plain text.
+        executor = AsyncMock(return_value=["notes written"])
+        consolidator = self._consolidator_with_executor(store, executor)
+        mock_provider.chat_stream_with_retry.side_effect = [
+            LLMResponse(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call-1", name="write_file", arguments={})],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(content="Folded notes.", finish_reason="stop"),
+        ]
+        self._seed_session(consolidator, "cli:tool-fold")
+
+        result = await consolidator.compact_idle_session("cli:tool-fold", runtime=runtime)
+
+        assert result == "Folded notes."
+        executor.assert_awaited_once()
+        _session, _runtime, tool_calls = executor.await_args.args
+        assert [call.name for call in tool_calls] == ["write_file"]
+        # The second provider call carries the assistant's tool call and its
+        # result, paired and in order.
+        sent = mock_provider.chat_stream_with_retry.call_args_list[1].kwargs["messages"]
+        assert sent[-2]["role"] == "assistant"
+        assert sent[-2]["tool_calls"][0]["id"] == "call-1"
+        assert sent[-1] == {
+            "role": "tool",
+            "tool_call_id": "call-1",
+            "name": "write_file",
+            "content": "notes written",
+        }
+        entries = store.read_unprocessed_history(since_cursor=0)
+        assert len(entries) == 1
+        assert consolidator.sessions.get_or_create("cli:tool-fold").last_archived > 0
+
+    @pytest.mark.asyncio
+    async def test_tool_loop_round_cap_fails_the_pass(
+        self,
+        store,
+        mock_provider,
+        runtime,
+    ):
+        executor = AsyncMock(return_value=["ok"])
+        consolidator = self._consolidator_with_executor(store, executor)
+        mock_provider.chat_stream_with_retry.return_value = LLMResponse(
+            content=None,
+            tool_calls=[ToolCallRequest(id="call-1", name="lookup", arguments={})],
+            finish_reason="tool_calls",
+        )
+        self._seed_session(consolidator, "cli:runaway-fold")
+
+        result = await consolidator.compact_idle_session("cli:runaway-fold", runtime=runtime)
+
+        assert result is None
+        assert executor.await_count == MemoryArchiver._MAX_TOOL_ROUNDS
+        entries = store.read_unprocessed_history(since_cursor=0)
+        assert len(entries) == 0
+        assert consolidator.sessions.get_or_create("cli:runaway-fold").last_archived == 0
+
+    @pytest.mark.asyncio
+    async def test_tool_executor_exception_fails_the_pass(
+        self,
+        store,
+        mock_provider,
+        runtime,
+    ):
+        executor = AsyncMock(side_effect=RuntimeError("workspace gone"))
+        consolidator = self._consolidator_with_executor(store, executor)
+        mock_provider.chat_stream_with_retry.return_value = LLMResponse(
+            content=None,
+            tool_calls=[ToolCallRequest(id="call-1", name="exec", arguments={})],
+            finish_reason="tool_calls",
+        )
+        self._seed_session(consolidator, "cli:executor-boom")
+
+        result = await consolidator.compact_idle_session("cli:executor-boom", runtime=runtime)
+
+        assert result is None
+        entries = store.read_unprocessed_history(since_cursor=0)
+        assert len(entries) == 0
+        assert consolidator.sessions.get_or_create("cli:executor-boom").last_archived == 0
 
     @pytest.mark.asyncio
     async def test_empty_response_uses_raw_fallback(

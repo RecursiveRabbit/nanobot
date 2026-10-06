@@ -26,7 +26,7 @@ from nanobot.agent.autocompact import AutoCompact
 from nanobot.agent.automation_turns import publish_next_deferred_turn
 from nanobot.agent.context import ContextBuilder, PersistedPromptContextResolver, TranscriptInput
 from nanobot.agent.cron_turns import CronTurnCoordinator
-from nanobot.agent.hook import AgentHook, AgentTurnHookFactory
+from nanobot.agent.hook import AgentHook, AgentHookContext, AgentTurnHookFactory
 from nanobot.agent.memory import Consolidator
 from nanobot.agent.model_runtime import ModelRuntimeResolver
 from nanobot.agent.runner import (
@@ -40,6 +40,7 @@ from nanobot.agent.tools.context import RequestContext, bind_request_context, re
 from nanobot.agent.tools.exec_session import ExecSessionManager
 from nanobot.agent.tools.file_state import FileStateStore, bind_file_states, reset_file_states
 from nanobot.agent.tools.message import capture_message_deliveries
+from nanobot.agent.tools.execution import execute_tool_calls
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.runtime_control import AgentRuntimeControl
 from nanobot.agent.turn_delivery import (
@@ -60,7 +61,7 @@ from nanobot.command.router import normalize_command_text
 from nanobot.config.schema import AgentDefaults, ModelPresetConfig
 from nanobot.events import NO_EVENTS, AgentEvent, EventSink
 from nanobot.llm_usage.context import source_from_request
-from nanobot.providers.base import LLMProvider, LLMUsage, ProviderConversationState
+from nanobot.providers.base import LLMProvider, LLMUsage, ProviderConversationState, ToolCallRequest
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_HISTORY_META,
@@ -435,6 +436,7 @@ class AgentLoop:
                 unified_session=unified_session,
             ),
             escalate_runtime=self._escalate_compaction_runtime,
+            execute_archive_tools=self._execute_compaction_tools,
         )
         self.auto_compact = AutoCompact(
             sessions=self.sessions,
@@ -768,6 +770,53 @@ class AgentLoop:
             session_summary=ctx.pending_summary,
             runtime_context_blocks=ctx.runtime_context_blocks,
         )
+
+    async def _execute_compaction_tools(
+        self,
+        session: Session,
+        runtime: LLMRuntime,
+        tool_calls: list[ToolCallRequest],
+    ) -> list[Any]:
+        """Run an idle fold's tool calls as the session's own agent.
+
+        Evans, 2026-10-06: tools during the fold are intended — writing to
+        disk is the point. Same registry, same workspace scope, same security
+        boundaries as a turn; only the turn telemetry is absent.
+        """
+        channel = session.key.split(":", 1)[0] if ":" in session.key else "cli"
+        chat_id = session.key.split(":", 1)[1] if ":" in session.key else session.key
+        scope = self.workspace_scopes.for_turn(
+            channel=channel,
+            message_metadata=None,
+            session_metadata=session.metadata,
+        )
+        request_token = bind_request_context(RequestContext(
+            channel=channel,
+            chat_id=chat_id,
+            session_key=session.key,
+            original_user_text="(compaction fold)",
+            runtime=runtime,
+            workspace=scope.project_path,
+        ))
+        workspace_token = bind_workspace_scope(scope)
+        try:
+            results, _events = await execute_tool_calls(
+                self.tools,
+                tool_calls,
+                concurrent=False,
+                external_lookup_counts={},
+                workspace_violation_counts={},
+                hook=AgentHook(),
+                context=AgentHookContext(
+                    iteration=0,
+                    messages=[],
+                    session_key=session.key,
+                ),
+            )
+        finally:
+            reset_workspace_scope(workspace_token)
+            reset_request_context(request_token)
+        return results
 
     def _request_context_for_turn(self, ctx: TurnContext) -> RequestContext:
         assert ctx.session is not None
