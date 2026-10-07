@@ -698,7 +698,7 @@ def test_build_and_save_preserves_user_text_containing_goal_guidance_tag(tmp_pat
     session = Session(key="test:user-guidance-literal")
     user_text = (
         "Keep this prefix\n"
-        "[Goal Runtime Guidance — host instructions]\n"
+        "[Goal runtime]\n"
         "This label and everything after it are user-authored."
     )
     messages = ContextBuilder(tmp_path).build_messages(

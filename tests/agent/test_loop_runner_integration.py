@@ -33,7 +33,7 @@ from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.utils.progress_events import output_events
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
-_GOAL_RUNTIME_GUIDANCE_TAG = "[Goal Runtime Guidance — host instructions]"
+_GOAL_RUNTIME_GUIDANCE_TAG = "[Goal runtime]"
 
 
 def _make_loop(tmp_path):

@@ -1231,8 +1231,8 @@ class AgentLoop:
             return (
                 "You have an active sustained goal:\n\n"
                 + "\n".join(_goal_lines)
-                + "\n\nPlease continue working toward the objective using your tools, "
-                "or call update_goal with action='complete' if the work is truly finished."
+                + "\n\nThe objective persists until update_goal closes it; "
+                "this turn resumes it from the saved context."
             )
 
         session_metadata = session.metadata if session is not None else None

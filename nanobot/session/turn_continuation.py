@@ -242,18 +242,19 @@ def _goal_continuation_prompt(metadata: Mapping[str, Any] | None) -> str:
     if lines:
         goal = "\n".join(lines)
         return (
-            "Continue the active sustained goal after the previous turn reached "
-            "its tool-call budget.\n\n"
+            "The previous turn reached its tool-call budget with the active "
+            "sustained goal unfinished:\n\n"
             f"{goal}\n\n"
-            "Continue from the saved context. Do not mention the continuation "
-            "boundary to the user. Use tools as needed, and call update_goal "
-            "with action='complete' when the objective is truly finished."
+            "This turn resumes from the saved context; the continuation "
+            "boundary is invisible to the user. update_goal with "
+            "action='complete' marks the objective finished when it truly is."
         )
     return (
-        "Continue the active sustained goal after the previous turn reached "
-        "its tool-call budget. Continue from the saved context. Do not mention "
-        "the continuation boundary to the user. Use tools as needed, and call "
-        "update_goal with action='complete' when the objective is truly finished."
+        "The previous turn reached its tool-call budget with the active "
+        "sustained goal unfinished. This turn resumes from the saved "
+        "context; the continuation boundary is invisible to the user. "
+        "update_goal with action='complete' marks the objective finished "
+        "when it truly is."
     )
 
 

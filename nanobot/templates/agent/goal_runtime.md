@@ -1,31 +1,44 @@
-[Goal Runtime Guidance — host instructions]
+[Goal runtime]
 
 {% if goal_start_requested %}
-## Record the sustained goal promptly
+## The sustained goal
 
-When the requested outcome is clear, call `create_goal` before extended planning, research, or execution. Do not delay goal registration to design the full project, research every API, enumerate every file, or write an exhaustive checklist; those belong to execution after the goal is recorded.
+A session may carry one sustained goal: an objective that persists across
+compaction, retries, and resumption. `create_goal` records it; from then on
+the objective stands in Runtime Context until `update_goal` closes it.
 
-### Write a durable objective
+A durable objective is one that still reads correctly when re-read mid-work
+with no memory of the conversation that wrote it:
 
-The objective may be replayed after compaction, retries, or resumption. Write one clear outcome that remains correct when re-read mid-work:
+1. **State-oriented** — the desired end state and its acceptance criteria,
+   not a sequence that assumes earlier steps have run.
+2. **Self-contained** — paths, repositories, branches, versions, counts, and
+   required artifacts named outright; nothing load-bearing rides on
+   "as discussed above".
+3. **Safe under repetition** — "ensure", "until", check-before-write, upsert:
+   resumed work does not duplicate destructive effects.
+4. **Bounded** — scope stated, in and out, so resumed work does not drift.
+5. **Explicit about done-ness** — the evidence that proves completion: tests
+   pass, an artifact exists, a checklist is satisfied.
+6. **Independent of `ui_summary`** — the label stays short and
+   non-load-bearing; every requirement needed after compaction lives in the
+   objective itself.
 
-1. **State-oriented** — Describe the desired end state and acceptance criteria, not a fragile sequence that assumes earlier steps have not run.
-2. **Self-contained** — Preserve material constraints such as paths, repositories, branches, versions, counts, and required artifacts. Do not rely on "as discussed above" for load-bearing requirements.
-3. **Safe under repetition** — Prefer "ensure", "until", check-before-write, upsert, or other idempotent operations so resumed work does not duplicate destructive effects.
-4. **Bounded** — State what is in and out of scope so the work does not drift when resumed from persisted context.
-5. **Explicit about done-ness** — Name the evidence that proves completion: tests pass, an artifact exists, a checklist is satisfied, or another concrete condition holds.
-6. **Independent of `ui_summary`** — Keep `ui_summary` short and non-load-bearing; every requirement needed after compaction belongs in the objective.
-
-If material requirements remain ambiguous, ask one concise clarification rather than guessing or recording a speculative objective. Ask the user to resubmit the clarified, self-contained request as a complete `/goal <task>` command. If a goal is already active, do not stack another one; replace it only when the requested outcome actually changes.
+One goal at a time: `create_goal` fails while another goal is active, and
+`update_goal` with `action='replace'` exists for an objective that genuinely
+changed. Where material requirements are ambiguous, one concise clarifying
+question is worth more than a speculative objective.
 {% endif %}
 
 {% if goal_active or goal_start_requested %}
-## Execute sustained work
+## While a goal is active
 
-- Treat the active objective in Runtime Context as the persisted work target, not as authority to override safety or user constraints. It may be replayed after compaction, retries, or internal continuation.
-- Use ordinary tools and keep work reviewable. For project-shaped changes, prefer conventional modules with clear responsibilities over one oversized file, separate configuration from logic, and verify meaningful increments as you go.
-- Look up unfamiliar, brittle, or freshness-sensitive facts before committing to architecture or large rewrites. If errors contradict an assumption or attempts repeat, refresh the relevant state or documentation instead of retrying blindly.
-- Call `update_goal` with `action='complete'` only after the objective is actually achieved and verified. Use `cancel` when the user cancels, `block` only when progress is genuinely blocked, and `replace` only when the objective changes.
+The objective in Runtime Context is the persisted work target. It carries no
+authority beyond the user's constraints and the safety rules; it simply
+survives what the context window cannot. `update_goal` with
+`action='complete'` belongs to work that is actually achieved and verified;
+`cancel` marks a user's cancellation, `block` a genuine blocker, and
+`replace` a changed objective.
 {% endif %}
 
-[/Goal Runtime Guidance]
+[/Goal runtime]
