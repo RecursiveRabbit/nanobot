@@ -123,13 +123,10 @@ def test_encode_turn_end_projects_complete_wire_contract() -> None:
         output_tokens=20,
         cache_read_tokens=40,
     ).with_timing(generation_ms=500, ttft_ms=125)
-    goal_state = {"active": True, "ui_summary": "Explore codebase"}
-
     payload = encode_turn_end(
         "chat-1",
         TurnEndEvent(
             latency_ms=1500,
-            goal_state=goal_state,
             usage=usage,
             round_usages=(usage,),
             context_window_tokens=128_000,
@@ -147,7 +144,6 @@ def test_encode_turn_end_projects_complete_wire_contract() -> None:
         "chat_id": "chat-1",
         "turn_id": "turn-1",
         "latency_ms": 1500,
-        "goal_state": goal_state,
         "usage": usage.to_turn_dict(),
         "round_usages": [usage.to_turn_dict()],
         "context_window_tokens": 128_000,

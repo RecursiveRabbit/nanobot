@@ -5,7 +5,7 @@ import pytest
 
 from nanobot.agent.loop import AgentLoop
 from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import GoalStatusEvent
+from nanobot.bus.outbound_events import TurnStatusEvent
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.websocket.runtime import WebSocketChannel
 from nanobot.providers.base import GenerationSettings, LLMResponse
@@ -69,7 +69,7 @@ async def test_process_direct_websocket_clears_run_status(tmp_path) -> None:
         status_messages = [
             event
             for event in events
-            if isinstance(event.event, GoalStatusEvent)
+            if isinstance(event.event, TurnStatusEvent)
         ]
         statuses = [event.event for event in status_messages]
         assert [status.status for status in statuses] == ["running", "idle"]

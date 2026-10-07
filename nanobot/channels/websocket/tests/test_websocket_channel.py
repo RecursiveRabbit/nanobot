@@ -25,8 +25,7 @@ from nanobot.bus.events import (
 )
 from nanobot.bus.outbound_events import (
     ContextCompactionEvent,
-    GoalStateSyncEvent,
-    GoalStatusEvent,
+    TurnStatusEvent,
     ProgressEvent,
     RecoveryStateEvent,
     RetryStatusEvent,
@@ -386,7 +385,7 @@ async def test_temporary_chat_is_transient_and_discarded(bus, tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("content", ["/goal private", "/trigger later", "/dream"])
+@pytest.mark.parametrize("content", ["/compact private", "/trigger later", "/dream"])
 async def test_temporary_chat_rejects_persistent_commands(bus, tmp_path, content) -> None:
     sessions = SessionManager(tmp_path)
     channel = WebSocketChannel(
@@ -549,7 +548,7 @@ async def test_temporary_looking_id_does_not_define_session_policy(bus, tmp_path
         {
             "type": "message",
             "chat_id": "temporary-looking-but-persistent",
-            "content": "/goal ordinary chat",
+            "content": "/status ordinary chat",
             "webui": True,
         },
     )
@@ -3191,7 +3190,7 @@ async def test_turn_end_keeps_registry_when_transcript_persistence_fails(
         chat_id=chat_id,
         content="",
         metadata=dict(inbound.metadata),
-        event=GoalStatusEvent(status="idle"),
+        event=TurnStatusEvent(status="idle"),
     ))
 
     # The normal WebUI idle event follows turn_end. It must not convert a
@@ -3264,7 +3263,7 @@ async def test_durable_incomplete_marker_stays_pending_without_safe_session_reco
         chat_id=chat_id,
         content="",
         metadata=dict(inbound.metadata),
-        event=GoalStatusEvent(status="idle"),
+        event=TurnStatusEvent(status="idle"),
     ))
 
     # Simulate a gateway restart: no process-local owner survives, so the
@@ -3436,7 +3435,7 @@ async def test_webui_idle_clears_owner_when_no_completion_write_failed() -> None
         chat_id=chat_id,
         content="",
         metadata=dict(inbound.metadata),
-        event=GoalStatusEvent(status="idle"),
+        event=TurnStatusEvent(status="idle"),
     ))
 
     assert wth.websocket_turn_wall_started_at(chat_id) is None
@@ -3485,7 +3484,7 @@ async def test_non_webui_transcript_failure_does_not_block_idle_cleanup(
         chat_id=chat_id,
         content="",
         metadata=dict(inbound.metadata),
-        event=GoalStatusEvent(status="idle"),
+        event=TurnStatusEvent(status="idle"),
     ))
     assert wth.websocket_turn_wall_started_at(chat_id) is None
     assert chat_id not in wth._WEBSOCKET_ACTIVE_TURNS
@@ -3512,7 +3511,7 @@ async def test_idle_clears_matching_owner_when_delivery_fails() -> None:
         chat_id=chat_id,
         content="",
         metadata={WEBSOCKET_TURN_OWNER_METADATA_KEY: owner},
-        event=GoalStatusEvent(status="idle"),
+        event=TurnStatusEvent(status="idle"),
     ))
     await asyncio.wait_for(_wait_for_connection_cleanup(channel, mock_ws), timeout=1)
 
@@ -3584,28 +3583,7 @@ async def test_send_turn_end_includes_latency_ms_when_present() -> None:
 
 
 @pytest.mark.asyncio
-async def test_send_turn_end_includes_goal_state_when_present() -> None:
-    bus = MagicMock()
-    channel = WebSocketChannel({"enabled": True, "allowFrom": ["*"]}, bus, gateway=_basic_handler(bus))
-    mock_ws = AsyncMock()
-    channel._attach(mock_ws, "chat-1")
-
-    blob = {"active": True, "ui_summary": "Explore codebase"}
-    await channel.send(OutboundMessage(
-        channel="websocket",
-        chat_id="chat-1",
-        content="",
-        event=TurnEndEvent(goal_state=blob),
-    ))
-
-    assert _sent_ws_payloads(mock_ws) == [
-        {"event": "turn_end", "chat_id": "chat-1", "goal_state": blob},
-        {"event": "session_updated", "chat_id": "chat-1", "scope": "thread"},
-    ]
-
-
-@pytest.mark.asyncio
-async def test_send_goal_status_running_emits_event_with_started_at() -> None:
+async def test_send_turn_status_running_emits_event_with_started_at() -> None:
     bus = MagicMock()
     channel = WebSocketChannel({"enabled": True, "allowFrom": ["*"]}, bus, gateway=_basic_handler(bus))
     mock_ws = AsyncMock()
@@ -3616,13 +3594,13 @@ async def test_send_goal_status_running_emits_event_with_started_at() -> None:
         chat_id="chat-1",
         content="",
         metadata={"webui_turn_id": "turn-running"},
-        event=GoalStatusEvent(status="running", started_at=1_700_000_000.5),
+        event=TurnStatusEvent(status="running", started_at=1_700_000_000.5),
     ))
 
     mock_ws.send.assert_awaited_once()
     body = json.loads(mock_ws.send.await_args.args[0])
     assert body == {
-        "event": "goal_status",
+        "event": "turn_status",
         "chat_id": "chat-1",
         "status": "running",
         "started_at": 1_700_000_000.5,
@@ -3631,7 +3609,7 @@ async def test_send_goal_status_running_emits_event_with_started_at() -> None:
 
 
 @pytest.mark.asyncio
-async def test_send_goal_status_idle_omits_started_at() -> None:
+async def test_send_turn_status_idle_omits_started_at() -> None:
     bus = MagicMock()
     channel = WebSocketChannel({"enabled": True, "allowFrom": ["*"]}, bus, gateway=_basic_handler(bus))
     mock_ws = AsyncMock()
@@ -3642,42 +3620,16 @@ async def test_send_goal_status_idle_omits_started_at() -> None:
         chat_id="chat-1",
         content="",
         metadata={"webui_turn_id": "turn-idle"},
-        event=GoalStatusEvent(status="idle", started_at=99.0),
+        event=TurnStatusEvent(status="idle", started_at=99.0),
     ))
 
     mock_ws.send.assert_awaited_once()
     body = json.loads(mock_ws.send.await_args.args[0])
     assert body == {
-        "event": "goal_status",
+        "event": "turn_status",
         "chat_id": "chat-1",
         "status": "idle",
         "turn_id": "turn-idle",
-    }
-
-
-@pytest.mark.asyncio
-async def test_send_goal_state_emits_blob_per_chat() -> None:
-    bus = MagicMock()
-    channel = WebSocketChannel({"enabled": True, "allowFrom": ["*"]}, bus, gateway=_basic_handler(bus))
-    mock_a = AsyncMock()
-    mock_b = AsyncMock()
-    channel._attach(mock_a, "chat-a")
-    channel._attach(mock_b, "chat-b")
-
-    await channel.send(OutboundMessage(
-        channel="websocket",
-        chat_id="chat-a",
-        content="",
-        event=GoalStateSyncEvent(goal_state={"active": True, "ui_summary": "A"}),
-    ))
-
-    mock_a.send.assert_awaited_once()
-    mock_b.send.assert_not_called()
-    body = json.loads(mock_a.send.await_args.args[0])
-    assert body == {
-        "event": "goal_state",
-        "chat_id": "chat-a",
-        "goal_state": {"active": True, "ui_summary": "A"},
     }
 
 
@@ -3689,86 +3641,6 @@ async def test_hydrate_noop_without_session_manager() -> None:
     channel._attach(mock_ws, "chat-1")
     await channel._outbound.hydrate("chat-1")
     mock_ws.send.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_hydrate_skips_when_no_goal_on_disk() -> None:
-    bus = MagicMock()
-    sm = MagicMock()
-    sm.read_session_metadata.return_value = None
-    channel = WebSocketChannel(
-        {"enabled": True, "allowFrom": ["*"]},
-        bus,
-        gateway=_basic_handler(bus, session_manager=sm),
-    )
-    mock_ws = AsyncMock()
-    channel._attach(mock_ws, "chat-1")
-    await channel._outbound.hydrate("chat-1")
-    mock_ws.send.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_hydrate_notifies_when_goal_active_on_disk() -> None:
-    bus = MagicMock()
-    sm = MagicMock()
-    sm.read_session_metadata.return_value = {
-        "metadata": {
-            "goal_state": {
-                "status": "active",
-                "objective": "finish docs",
-                "ui_summary": "Docs",
-            },
-        },
-        "messages": [],
-    }
-    channel = WebSocketChannel(
-        {"enabled": True, "allowFrom": ["*"]},
-        bus,
-        gateway=_basic_handler(bus, session_manager=sm),
-    )
-    mock_ws = AsyncMock()
-    channel._attach(mock_ws, "chat-1")
-    await channel._outbound.hydrate("chat-1")
-    mock_ws.send.assert_awaited_once()
-    body = json.loads(mock_ws.send.await_args.args[0])
-    assert body["event"] == "goal_state"
-    assert body["chat_id"] == "chat-1"
-    assert body["goal_state"]["active"] is True
-    assert body["goal_state"]["objective"] == "finish docs"
-    assert body["goal_state"]["ui_summary"] == "Docs"
-
-
-@pytest.mark.asyncio
-async def test_hydrate_restores_blocked_attention_on_disk() -> None:
-    bus = MagicMock()
-    sm = MagicMock()
-    sm.read_session_metadata.return_value = {
-        "metadata": {
-            "goal_state": {
-                "status": "blocked",
-                "objective": "deploy safely",
-                "ui_summary": "Approval required",
-            },
-        },
-        "messages": [],
-    }
-    channel = WebSocketChannel(
-        {"enabled": True, "allowFrom": ["*"]},
-        bus,
-        gateway=_basic_handler(bus, session_manager=sm),
-    )
-    mock_ws = AsyncMock()
-    channel._attach(mock_ws, "chat-1")
-
-    await channel._outbound.hydrate("chat-1")
-
-    body = json.loads(mock_ws.send.await_args.args[0])
-    assert body["goal_state"] == {
-        "active": False,
-        "status": "blocked",
-        "ui_summary": "Approval required",
-        "objective": "deploy safely",
-    }
 
 
 @pytest.mark.asyncio
@@ -3802,7 +3674,7 @@ async def test_hydrate_replays_running_turn() -> None:
     mock_ws.send.assert_awaited_once()
     body = json.loads(mock_ws.send.await_args.args[0])
     assert body == {
-        "event": "goal_status",
+        "event": "turn_status",
         "chat_id": "chat-1",
         "status": "running",
         "started_at": 1_700_000_000.0,
@@ -4555,8 +4427,6 @@ async def test_commands_api_returns_slash_command_metadata(bus: MagicMock) -> No
         assert commands["/history"]["lifecycle"] == "side_channel"
         assert commands["/history"]["arg_hint"] == "[n]"
         assert commands["/history"]["accepts_args"] is True
-        assert commands["/goal"]["lifecycle"] == "agent_turn_with_args"
-        assert commands["/goal"]["accepts_args"] is True
         assert all("description" in row for row in body["commands"])
     finally:
         await channel.stop()

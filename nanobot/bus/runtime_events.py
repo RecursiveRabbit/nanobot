@@ -82,13 +82,6 @@ class SessionTurnPersisted(AgentEvent):
     sender_id: str
 
 
-@dataclass(frozen=True)
-class GoalStateChanged(AgentEvent):
-    """A session's sustained-goal state changed."""
-
-    context: RuntimeEventContext
-    session_metadata: dict[str, Any] = field(default_factory=dict)
-
 
 @dataclass(frozen=True)
 class RuntimeModelChanged(AgentEvent):

@@ -504,7 +504,7 @@ describe("NanobotClient", () => {
     expect(handler).toHaveBeenCalledTimes(3);
   });
 
-  it("records goal_status run strip without an onChat subscriber", () => {
+  it("records turn_status run strip without an onChat subscriber", () => {
     const client = new NanobotClient({
       url: "ws://test",
       reconnect: false,
@@ -513,14 +513,14 @@ describe("NanobotClient", () => {
     client.connect();
     lastSocket().fakeOpen();
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-strip",
       status: "running",
       started_at: 12_345,
     });
     expect(client.getRunStartedAt("chat-strip")).toBe(12_345);
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-strip",
       status: "idle",
     });
@@ -538,7 +538,7 @@ describe("NanobotClient", () => {
     client.connect();
     lastSocket().fakeOpen();
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-stop",
       status: "running",
       started_at: 12_345,
@@ -564,7 +564,7 @@ describe("NanobotClient", () => {
     client.connect();
     lastSocket().fakeOpen();
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-strip",
       status: "running",
       started_at: 12_345,
@@ -589,7 +589,7 @@ describe("NanobotClient", () => {
     client.connect();
     lastSocket().fakeOpen();
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-strip",
       status: "running",
       started_at: 12_345,
@@ -613,7 +613,7 @@ describe("NanobotClient", () => {
     const requestGeneration = client.getRunGeneration("chat-race");
 
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-race",
       status: "running",
       started_at: 12_345,
@@ -651,7 +651,7 @@ describe("NanobotClient", () => {
     client.connect();
     lastSocket().fakeOpen();
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-guidance",
       status: "running",
       started_at: 12_345,
@@ -745,7 +745,7 @@ describe("NanobotClient", () => {
       turnId: "turn-new",
     });
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-rejection-race",
       status: "running",
       started_at: 2_000,
@@ -779,7 +779,7 @@ describe("NanobotClient", () => {
       turnId: "turn-clock-first",
     });
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-reject-newer-clock",
       status: "running",
       started_at: 1_000,
@@ -789,7 +789,7 @@ describe("NanobotClient", () => {
       turnId: "turn-clock-second",
     });
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-reject-newer-clock",
       status: "running",
       started_at: 2_000,
@@ -853,7 +853,7 @@ describe("NanobotClient", () => {
       turn_id: "turn-accepted",
     });
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-too-big-race",
       status: "running",
       started_at: 1_000,
@@ -1163,14 +1163,14 @@ describe("NanobotClient", () => {
       turnId: "turn-legacy-idle",
     });
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-legacy-idle",
       status: "running",
       started_at: 4321,
     });
 
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-legacy-idle",
       status: "idle",
     });
@@ -1178,7 +1178,7 @@ describe("NanobotClient", () => {
     expect(client.hasUnsettledRun("chat-legacy-idle")).toBe(false);
     expect(client.getRunStartedAt("chat-legacy-idle")).toBeNull();
     expect(handler).toHaveBeenLastCalledWith(expect.objectContaining({
-      event: "goal_status",
+      event: "turn_status",
       status: "idle",
       turn_id: "turn-legacy-idle",
     }));
@@ -1203,7 +1203,7 @@ describe("NanobotClient", () => {
     handler.mockClear();
 
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-legacy-ambiguous",
       status: "idle",
     });
@@ -1439,7 +1439,7 @@ describe("NanobotClient", () => {
     client.connect();
     lastSocket().fakeOpen();
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-delayed-idle",
       status: "running",
       started_at: 1_000,
@@ -1449,7 +1449,7 @@ describe("NanobotClient", () => {
       turnId: "turn-new",
     });
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-delayed-idle",
       status: "running",
       started_at: 2_000,
@@ -1459,7 +1459,7 @@ describe("NanobotClient", () => {
     runHandler.mockClear();
 
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-delayed-idle",
       status: "idle",
       turn_id: "turn-old",
@@ -1481,7 +1481,7 @@ describe("NanobotClient", () => {
     const requestGeneration = client.getRunGeneration("chat-delayed-run");
 
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-delayed-run",
       status: "running",
       started_at: 12_345,
@@ -1548,7 +1548,7 @@ describe("NanobotClient", () => {
     client.connect();
     lastSocket().fakeOpen();
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-canonical",
       status: "running",
       started_at: 12_345,
@@ -1579,7 +1579,7 @@ describe("NanobotClient", () => {
       turn_id: "turn-canonical",
     });
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-canonical",
       status: "idle",
       turn_id: "turn-canonical",
@@ -1600,7 +1600,7 @@ describe("NanobotClient", () => {
     client.connect();
     lastSocket().fakeOpen();
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-status",
       status: "running",
       started_at: 12_345,
@@ -1612,7 +1612,7 @@ describe("NanobotClient", () => {
     expect(lateHandler).toHaveBeenCalledWith("chat-status", 12_345);
 
     lastSocket().fakeMessage({
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "chat-status",
       status: "idle",
     });
@@ -1620,54 +1620,7 @@ describe("NanobotClient", () => {
     expect(lateHandler).toHaveBeenCalledWith("chat-status", null);
   });
 
-  it("records goal_state per chat_id without an onChat subscriber", () => {
-    const client = new NanobotClient({
-      url: "ws://test",
-      reconnect: false,
-      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
-    });
-    client.connect();
-    lastSocket().fakeOpen();
-    lastSocket().fakeMessage({
-      event: "goal_state",
-      chat_id: "chat-goal-a",
-      goal_state: { active: true, ui_summary: "Docs" },
-    });
-    lastSocket().fakeMessage({
-      event: "goal_state",
-      chat_id: "chat-goal-b",
-      goal_state: { active: true, objective: "Ship API" },
-    });
-    expect(client.getGoalState("chat-goal-a")).toEqual({ active: true, ui_summary: "Docs" });
-    expect(client.getGoalState("chat-goal-b")).toEqual({
-      active: true,
-      objective: "Ship API",
-    });
-    lastSocket().fakeMessage({
-      event: "goal_state",
-      chat_id: "chat-goal-a",
-      goal_state: { active: false },
-    });
-    expect(client.getGoalState("chat-goal-a")).toEqual({ active: false });
-  });
-
-  it("records goal_state from turn_end payload when present", () => {
-    const client = new NanobotClient({
-      url: "ws://test",
-      reconnect: false,
-      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
-    });
-    client.connect();
-    lastSocket().fakeOpen();
-    lastSocket().fakeMessage({
-      event: "turn_end",
-      chat_id: "chat-te",
-      goal_state: { active: true, objective: "Long task" },
-    });
-    expect(client.getGoalState("chat-te")).toEqual({ active: true, objective: "Long task" });
-  });
-
-  it("buffers after unsubscribe until the chat is subscribed again", () => {
+      it("buffers after unsubscribe until the chat is subscribed again", () => {
     const client = new NanobotClient({
       url: "ws://test",
       reconnect: false,

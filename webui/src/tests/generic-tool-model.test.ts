@@ -27,8 +27,6 @@ describe("generic tool activity semantics", () => {
     ['my({"action":"set","key":"model","value":"private-model"})', "Updated agent settings", "model"],
     ['cron({"action":"add","name":"Daily digest","message":"private prompt"})', "Scheduled automation", "Daily digest"],
     ['cron({"action":"remove","name":"Daily digest"})', "Removed automation", "Daily digest"],
-    ['create_goal({"objective":"private objective","ui_summary":"Benchmark memory"})', "Started long task", "Benchmark memory"],
-    ['update_goal({"action":"complete","recap":"private recap"})', "Updated long task", "complete"],
     ['exec_session({"session_id":"session-1234567890-secret","until_exit":true})', "Continued command", "session…ecret"],
     ['write_stdin({"session_id":"legacy-1234567890-secret","chars":"private input"})', "Continued command", "legacy-…ecret"],
     ['list_exec_sessions({})', "Checked running commands", ""],

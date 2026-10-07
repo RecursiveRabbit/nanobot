@@ -380,50 +380,6 @@ async def test_terminal_wait_does_not_block_next_iteration_after_tools():
     assert result.final_content == "combined final answer"
 
 
-@pytest.mark.asyncio
-async def test_goal_continuation_precedes_terminal_wait():
-    """An active sustained goal keeps running without joining background work."""
-    from nanobot.agent.runner import AgentRunner
-
-    provider = MagicMock()
-    provider.chat_stream_with_retry = AsyncMock(side_effect=[
-        LLMResponse(content="goal checkpoint", tool_calls=[]),
-        LLMResponse(content="goal complete", tool_calls=[]),
-    ])
-    tools = MagicMock()
-    tools.get_definitions.return_value = []
-    continuation_checks = 0
-    terminal_waits = 0
-
-    def continue_goal() -> str | None:
-        nonlocal continuation_checks
-        continuation_checks += 1
-        return "Continue the active goal." if continuation_checks == 1 else None
-
-    async def drain_available():
-        return []
-
-    async def wait_at_terminal():
-        nonlocal terminal_waits
-        terminal_waits += 1
-        return []
-
-    result = await AgentRunner().run(make_run_spec(
-        provider,
-        initial_messages=[{"role": "user", "content": "complete the goal"}],
-        tools=tools,
-        model="test-model",
-        max_iterations=3,
-        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
-        injection_callback=drain_available,
-        terminal_injection_callback=wait_at_terminal,
-        continuation_callback=continue_goal,
-    ))
-
-    assert provider.chat_stream_with_retry.await_count == 2
-    assert terminal_waits == 1
-    assert result.final_content == "goal complete"
-
 
 @pytest.mark.asyncio
 async def test_checkpoint2_injects_after_final_response_with_resuming_stream():

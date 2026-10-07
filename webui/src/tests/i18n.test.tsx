@@ -32,7 +32,6 @@ const SLASH_COMMAND_KEYS = [
   "dream_log",
   "dream_restore",
   "dream_prompt",
-  "goal",
   "trigger",
   "help",
   "pairing",
@@ -596,8 +595,6 @@ describe("webui i18n", () => {
       const slash = resource.common.thread.composer.slash;
       expect(slash.badges.current).toBeTruthy();
       expect(slash.badges.recent).toBeTruthy();
-      expect(slash.details.goalActive).toBeTruthy();
-      expect(slash.details.goalReady).toBeTruthy();
       expect(slash.details.history).toBeTruthy();
       expect(slash.details.stopRunning).toBeTruthy();
       for (const key of SLASH_COMMAND_KEYS) {

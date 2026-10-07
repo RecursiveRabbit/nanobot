@@ -58,7 +58,6 @@ from nanobot.utils.runtime import (
     is_blank_text,
 )
 
-ContinuationCallback = Callable[[], str | None]
 CheckpointCallback = Callable[[dict[str, Any]], Awaitable[None]]
 InjectionCallback = Callable[..., Awaitable[Iterable[Any] | None]]
 
@@ -108,7 +107,6 @@ class AgentRunSpec:
     consolidate_provider_compaction: ProviderCompactionConsolidator | None = None
     injection_callback: InjectionCallback | None = None
     terminal_injection_callback: InjectionCallback | None = None
-    continuation_callback: ContinuationCallback | None = None
     finalize_on_max_iterations: bool = True
     provider_state: ProviderConversationState | None = None
     llm_usage_source: LLMUsageSource | None = None
@@ -162,7 +160,6 @@ class AgentRunner:
         conversation_state: ProviderConversationStateController | None = None,
         phase: str = "after error",
         iteration: int | None = None,
-        allow_continuation: bool = False,
         wait_at_terminal: bool = False,
     ) -> tuple[bool, int]:
         """Drain pending injections. Returns (should_continue, updated_cycles).
@@ -177,10 +174,6 @@ class AgentRunner:
         if injection_cycles < _MAX_INJECTION_CYCLES:
             injections = await self._drain_injections(spec)
             real_injection = bool(injections)
-        if not injections and allow_continuation and assistant_message is not None:
-            continuation = self._build_continuation_message(spec)
-            if continuation is not None:
-                injections = [continuation]
         if (
             not injections
             and wait_at_terminal
@@ -220,20 +213,6 @@ class AgentRunner:
         else:
             logger.info("Injected caller-requested continuation {}", phase)
         return True, injection_cycles
-
-    @staticmethod
-    def _build_continuation_message(spec: AgentRunSpec) -> dict[str, str] | None:
-        callback = spec.continuation_callback
-        if callback is None:
-            return None
-        try:
-            content = callback()
-        except Exception:
-            logger.exception("continuation_callback failed")
-            return None
-        if content is None or not content.strip():
-            return None
-        return {"role": "user", "content": content}
 
     async def _drain_injections(
         self,
@@ -690,9 +669,6 @@ class AgentRunner:
                 conversation_state=conversation_state,
                 phase="after final response",
                 iteration=iteration,
-                allow_continuation=(
-                    response.finish_reason not in {"refusal", "content_filter"}
-                ),
                 wait_at_terminal=(
                     assistant_message is not None
                     and response.finish_reason

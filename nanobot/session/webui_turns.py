@@ -16,18 +16,16 @@ from nanobot.agent.tools.context import current_request_context
 from nanobot.agent.turn_delivery import TurnRoute
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.outbound_events import (
-    GoalStateSyncEvent,
-    GoalStatusEvent,
     RuntimeModelUpdatedEvent,
     SessionUpdatedEvent,
     TurnEndEvent,
     TurnModelUpdatedEvent,
+    TurnStatusEvent,
     UserInputEvent,
     outbound_message_for_event,
 )
 from nanobot.bus.queue import MessageBus
 from nanobot.bus.runtime_events import (
-    GoalStateChanged,
     RuntimeEventContext,
     RuntimeModelChanged,
     SessionTurnStarted,
@@ -40,7 +38,6 @@ from nanobot.llm_usage.context import llm_usage_source
 from nanobot.providers.base import LLMProvider, LLMUsage
 from nanobot.providers.fallback_provider import FallbackModelObserver
 from nanobot.runtime_context import public_history_message
-from nanobot.session.goal_state import goal_state_ws_blob
 from nanobot.session.history_visibility import is_hidden_history_message
 from nanobot.session.manager import Session, SessionManager
 from nanobot.session.recovery import RecoveryCoordinator
@@ -449,7 +446,7 @@ async def publish_turn_run_status(
         outbound_message_for_event(
             channel=msg.channel,
             chat_id=cid,
-            event=GoalStatusEvent(status=status, started_at=started_at_event),
+            event=TurnStatusEvent(status=status, started_at=started_at_event),
             metadata=msg.metadata,
         ),
     )
@@ -580,10 +577,6 @@ class WebuiTurnCoordinator:
             self.bus.subscribe(
                 self._handle_turn_completed_event,
                 TurnCompleted,
-            ),
-            self.bus.subscribe(
-                self._handle_goal_state_changed,
-                GoalStateChanged,
             ),
             self.bus.subscribe(
                 self._handle_runtime_model_changed,
@@ -718,23 +711,6 @@ class WebuiTurnCoordinator:
             await self.recovery.turn_completed(event.context.session_key)
         self._schedule_title_update_from_event(event)
 
-    async def _handle_goal_state_changed(self, event: GoalStateChanged) -> None:
-        if not self._is_websocket_event(event.context):
-            return
-        cid = str(event.context.chat_id or "").strip()
-        if not cid:
-            return
-        await self.bus.publish_outbound(
-            outbound_message_for_event(
-                channel=event.context.channel,
-                chat_id=cid,
-                event=GoalStateSyncEvent(
-                    goal_state=goal_state_ws_blob(event.session_metadata),
-                ),
-                metadata=event.context.metadata,
-            ),
-        )
-
     async def _handle_runtime_model_changed(self, event: RuntimeModelChanged) -> None:
         await self.bus.publish_outbound(
             outbound_message_for_event(
@@ -764,14 +740,12 @@ class WebuiTurnCoordinator:
         if msg.channel != "websocket":
             return
 
-        session = self.sessions.get_or_create(session_key)
         await self.bus.publish_outbound(
             outbound_message_for_event(
                 channel=msg.channel,
                 chat_id=msg.chat_id,
                 event=TurnEndEvent(
                     latency_ms=latency_ms,
-                    goal_state=goal_state_ws_blob(session.metadata),
                     usage=usage,
                     round_usages=round_usages,
                     context_window_tokens=context_window_tokens,

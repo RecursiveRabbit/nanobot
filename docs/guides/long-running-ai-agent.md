@@ -1,14 +1,14 @@
 # How to Run a Long-Running AI Agent with nanobot
 
-nanobot can keep agent work alive across turns through sustained goals,
-persistent sessions, scheduled automations, local triggers, and a gateway
-process that stays running.
+nanobot can keep agent work alive across turns through persistent sessions,
+scheduled automations, local triggers, and a gateway process that stays
+running.
 
 ## What you will build
 
 - a working local agent
 - a persistent chat session
-- a long-running goal or automation
+- a scheduled automation or local trigger
 - a gateway process for background delivery
 
 ## When to use this
@@ -33,32 +33,27 @@ Start a gateway:
 nanobot gateway
 ```
 
-From the WebUI or a chat session, start a sustained goal:
-
-```text
-/goal Review this workspace, identify missing tests, and propose the smallest next fix.
-```
-
-For scheduled or trigger-based runs, create the automation from the target chat
-so nanobot can link it to the correct session and workspace.
+Create the automation from the target chat so nanobot can link it to the
+correct session and workspace. Local triggers fire turns from scripts and
+build jobs without a model in the loop.
 
 ## Production notes
 
 - Keep the gateway running for chat apps, WebUI sessions, automations, and local
   triggers.
 - Use stable session keys or chat sessions for work that should preserve context.
-- Keep goals bounded and explicit about done-ness.
+- Keep automations bounded and explicit about done-ness.
 - Review Automations in the WebUI before relying on a schedule.
 
 ## Security notes
 
-- Treat long-running goals as delegated work with real tool access.
+- Treat automations as delegated work with real tool access.
 - Restrict workspaces and shell execution before scheduling unattended tasks.
-- Keep chat access narrow so unknown users cannot create goals or automations.
+- Keep chat access narrow so unknown users cannot create automations or triggers.
 
 ## Troubleshooting
 
-- If a goal appears stuck, inspect the active session and gateway logs.
+- If an automation appears stuck, inspect the active session and gateway logs.
 - If an automation does not run, check that it is linked to a chat/session and
   that the gateway is still running.
 - If a local trigger fails, check the command copied from the WebUI Automations

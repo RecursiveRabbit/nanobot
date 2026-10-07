@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from nanobot.agent.context import TranscriptInput
-from nanobot.agent.goal_permission import goal_mutation_allowed, goal_mutation_permission
 from nanobot.agent.tools.context import RequestContext
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.outbound_events import StreamedResponseEvent
@@ -28,12 +27,10 @@ from nanobot.runtime_context import (
     public_history_message,
     webui_quote_runtime_context,
 )
-from nanobot.session.goal_state import GOAL_STATE_KEY
 from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.utils.progress_events import output_events
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
-_GOAL_RUNTIME_GUIDANCE_TAG = "[Goal runtime]"
 
 
 def _make_loop(tmp_path):
@@ -97,103 +94,6 @@ async def test_loop_uses_structured_retry_status_without_legacy_text(tmp_path):
     assert isinstance(outbound.event, RetryStatusEvent)
     assert outbound.event.state == "waiting"
     assert outbound.chat_id == "chat-a"
-
-
-@pytest.mark.asyncio
-async def test_ephemeral_runner_enters_and_restores_turn_scopes(tmp_path):
-    loop = _make_loop(tmp_path)
-
-    async def chat_stream_with_retry(**_kwargs):
-        assert goal_mutation_allowed() is True
-        return LLMResponse(content="done", tool_calls=[], usage=None)
-
-    loop.provider.chat_stream_with_retry = AsyncMock(side_effect=chat_stream_with_retry)
-    loop.tools.get_definitions = MagicMock(return_value=[])
-
-    await loop._run_agent_loop(
-        TranscriptInput(history=[], current_message=None),
-        runtime=loop.llm_runtime(),
-        ephemeral=True,
-        turn_scopes=[goal_mutation_permission(True)],
-    )
-
-    assert goal_mutation_allowed() is False
-
-
-@pytest.mark.asyncio
-async def test_goal_command_can_implement_plan_from_prior_discussion(tmp_path):
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.events import InboundMessage
-    from nanobot.bus.queue import MessageBus
-
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-    provider.chat_stream_with_retry = AsyncMock(side_effect=[
-        LLMResponse(
-            content="recording the agreed plan",
-            tool_calls=[
-                ToolCallRequest(
-                    id="call_create",
-                    name="create_goal",
-                    arguments={
-                        "objective": "Implement the agreed migration plan and run its tests.",
-                    },
-                )
-            ],
-            usage=None,
-        ),
-        LLMResponse(
-            content="closing goal",
-            tool_calls=[
-                ToolCallRequest(
-                    id="call_update",
-                    name="update_goal",
-                    arguments={"action": "complete", "recap": "Implemented and tested."},
-                )
-            ],
-            usage=None,
-        ),
-        LLMResponse(
-            content="trying to start another goal",
-            tool_calls=[
-                ToolCallRequest(
-                    id="call_create_again",
-                    name="create_goal",
-                    arguments={"objective": "Start an unrelated follow-up."},
-                )
-            ],
-            usage=None,
-        ),
-        LLMResponse(content="done", tool_calls=[], usage=None),
-    ])
-    loop = AgentLoop(bus=MessageBus(), provider=provider, workspace=tmp_path, model="test-model")
-    session = loop.sessions.get_or_create("cli:direct")
-    session.add_message("user", "Let's agree on the migration implementation.")
-    session.add_message("assistant", "Use the staged migration plan and run integration tests.")
-
-    result = await loop._process_message(
-        InboundMessage(
-            channel="cli",
-            sender_id="user",
-            chat_id="direct",
-            content="/goal implement the plan above",
-        )
-    )
-
-    assert result is not None
-    assert result.content == "done"
-    assert goal_mutation_allowed() is False
-    assert session.metadata[GOAL_STATE_KEY]["status"] == "completed"
-    first_request = provider.chat_stream_with_retry.await_args_list[0].kwargs["messages"]
-    assert "staged migration plan" in str(first_request)
-    assert "/goal implement the plan above" in str(first_request)
-    assert _GOAL_RUNTIME_GUIDANCE_TAG in str(first_request)
-    final_request = provider.chat_stream_with_retry.await_args_list[-1].kwargs["messages"]
-    assert "create_goal is unavailable for this turn" in str(final_request)
-    assert _GOAL_RUNTIME_GUIDANCE_TAG in str(session.messages[2]["content"])
-    assert _GOAL_RUNTIME_GUIDANCE_TAG not in str(
-        public_history_message(session.messages[2])["content"]
-    )
 
 
 @pytest.mark.asyncio
@@ -340,46 +240,6 @@ async def test_runtime_context_provider_runs_once_across_tool_iterations(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_non_goal_direct_turn_cannot_reuse_prior_goal_command(tmp_path):
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
-
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-    provider.chat_stream_with_retry = AsyncMock(side_effect=[
-        LLMResponse(
-            content="trying to create a goal",
-            tool_calls=[
-                ToolCallRequest(
-                    id="call_create",
-                    name="create_goal",
-                    arguments={"objective": "Unauthorized persistent objective."},
-                )
-            ],
-            usage=None,
-        ),
-        LLMResponse(content="handled as a one-time task", tool_calls=[], usage=None),
-    ])
-    loop = AgentLoop(bus=MessageBus(), provider=provider, workspace=tmp_path, model="test-model")
-    session = loop.sessions.get_or_create("api:default")
-    session.add_message("user", "/goal old completed request")
-    session.add_message("assistant", "The old request is complete.")
-
-    result = await loop.process_direct(
-        "Handle this as an ordinary one-time task.",
-        session_key=session.key,
-        channel="api",
-        chat_id="default",
-        persist_user_message=False,
-    )
-
-    assert result is not None
-    assert result.content == "handled as a one-time task"
-    assert GOAL_STATE_KEY not in session.metadata
-    second_request = provider.chat_stream_with_retry.await_args_list[1].kwargs["messages"]
-    assert "create_goal is unavailable for this turn" in str(second_request)
-
-@pytest.mark.asyncio
 async def test_loop_max_iterations_message_stays_stable(tmp_path):
     loop = _make_loop(tmp_path)
     loop.provider.chat_stream_with_retry = AsyncMock(return_value=LLMResponse(
@@ -395,38 +255,6 @@ async def test_loop_max_iterations_message_stays_stable(tmp_path):
         runtime=loop.llm_runtime(),
     )
 
-    assert result.final_content == (
-        "I reached the maximum number of tool call iterations (2) "
-        "without completing the task. You can try breaking the task into smaller steps."
-    )
-
-
-@pytest.mark.asyncio
-async def test_loop_goal_turn_uses_standard_iteration_budget(tmp_path):
-    loop = _make_loop(tmp_path)
-    loop.provider.chat_stream_with_retry = AsyncMock(return_value=LLMResponse(
-        content="working",
-        tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={})],
-    ))
-    loop.tools.get_definitions = MagicMock(return_value=[])
-    loop.tools.execute = AsyncMock(return_value="ok")
-    loop.max_iterations = 2
-
-    runtime = loop.llm_runtime()
-    result = await loop._run_agent_loop(
-        TranscriptInput(history=[], current_message=None),
-        runtime=runtime,
-        request_context=RequestContext(
-            channel="cli",
-            chat_id="direct",
-            runtime=runtime,
-            metadata={"original_command": "/goal"},
-        ),
-    )
-
-    assert result.stop_reason == "max_iterations"
-    assert loop.provider.chat_stream_with_retry.await_count == 3
-    assert loop.provider.chat_stream_with_retry.await_args_list[-1].kwargs["tools"] is None
     assert result.final_content == (
         "I reached the maximum number of tool call iterations (2) "
         "without completing the task. You can try breaking the task into smaller steps."

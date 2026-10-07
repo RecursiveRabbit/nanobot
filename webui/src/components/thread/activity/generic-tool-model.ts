@@ -236,10 +236,6 @@ function activityLabel(
       if (action === "add") return statusCopy(status, "Scheduling automation", "Scheduled automation", "Could not schedule automation");
       if (action === "remove") return statusCopy(status, "Removing automation", "Removed automation", "Could not remove automation");
       return statusCopy(status, "Checking automations", "Checked automations", "Could not check automations");
-    case "create_goal":
-      return statusCopy(status, "Starting long task", "Started long task", "Could not start long task");
-    case "update_goal":
-      return statusCopy(status, "Updating long task", "Updated long task", "Could not update long task");
     // TODO(0.3.2): Remove write_stdin display compatibility after 0.3.1.
     case "exec_session":
     case "write_stdin":
@@ -289,10 +285,6 @@ function activityDetail(items: GenericToolRunItem[], family: ToolFamily, name: s
       return safeText(fieldValue(trace, "key"));
     case "cron":
       return safeText(fieldValue(trace, "name"));
-    case "create_goal":
-      return safeText(fieldValue(trace, "ui_summary"));
-    case "update_goal":
-      return safeText(fieldValue(trace, "action"));
     // TODO(0.3.2): Remove write_stdin display compatibility after 0.3.1.
     case "exec_session":
     case "write_stdin":

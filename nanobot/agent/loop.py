@@ -80,7 +80,6 @@ from nanobot.security.workspace_access import (
 )
 from nanobot.session import turn_continuation
 from nanobot.session.automation_turns import automation_history_overrides
-from nanobot.session.goal_state import goal_state_runtime_lines
 from nanobot.session.history_visibility import HIDDEN_HISTORY_META
 from nanobot.session.keys import UNIFIED_SESSION_KEY, remember_last_channel
 from nanobot.session.manager import SESSION_CACHE_MAX_SIZE, Session, SessionManager
@@ -1223,18 +1222,6 @@ class AgentLoop:
         request_token = bind_request_context(request_ctx)
         workspace_token = bind_workspace_scope(effective_scope)
         turn_scope_stack = ExitStack()
-        # Compute lazily because create_goal may create goal metadata during this run.
-        def _goal_continue() -> str | None:
-            _goal_lines = goal_state_runtime_lines(session.metadata if session is not None else None)
-            if not _goal_lines:
-                return None
-            return (
-                "You have an active sustained goal:\n\n"
-                + "\n".join(_goal_lines)
-                + "\n\nThe objective persists until update_goal closes it; "
-                "this turn resumes it from the saved context."
-            )
-
         session_metadata = session.metadata if session is not None else None
         try:
             for scope in turn_scopes or ():
@@ -1293,12 +1280,7 @@ class AgentLoop:
                 ),
                 injection_callback=_drain_pending,
                 terminal_injection_callback=_wait_for_pending,
-                continuation_callback=_goal_continue,
-                finalize_on_max_iterations=turn_continuation.should_finalize_on_max_iterations(
-                    pending_queue_available=pending_queue is not None and session is not None,
-                    session_metadata=session_metadata,
-                    message_metadata=request_metadata,
-                ),
+                finalize_on_max_iterations=True,
                 provider_state=provider_state,
                 llm_usage_source=source_from_request(
                     active_session_key,
@@ -1316,12 +1298,7 @@ class AgentLoop:
             session.provider_state = result.provider_state
         if result.stop_reason == "max_iterations":
             logger.warning("Max iterations ({}) reached", self.max_iterations)
-            should_stream = turn_continuation.should_stream_budget_response(
-                stop_reason=result.stop_reason,
-                pending_queue_available=pending_queue is not None and session is not None,
-                session_metadata=session_metadata,
-                message_metadata=request_metadata,
-            )
+            should_stream = True
             # Push final content through stream so streaming channels (e.g. Feishu)
             # update the card instead of leaving it empty.
             if events.publish is not None and streaming and should_stream:
@@ -1521,12 +1498,8 @@ class AgentLoop:
                         pending_queue=pending,
                         delivery=delivery,
                     )
-                    continuing = turn_continuation.internal_continuation_pending(msg.metadata)
-                    await delivery.complete(
-                        response,
-                        publish_completion=not continuing,
-                    )
-                    completion_published = not continuing
+                    await delivery.complete(response, publish_completion=True)
+                    completion_published = True
                     for _, coordinator in self._automation_turn_coordinators:
                         coordinator.complete(msg, response=response)
                 except asyncio.CancelledError:
@@ -1569,11 +1542,7 @@ class AgentLoop:
                     raise
                 except Exception as exc:
                     logger.exception("Error processing message for session {}", session_key)
-                    await delivery.fail(
-                        publish_completion=not turn_continuation.internal_continuation_pending(
-                            msg.metadata
-                        )
-                    )
+                    await delivery.fail(publish_completion=True)
                     for _, coordinator in self._automation_turn_coordinators:
                         coordinator.complete(msg, error=exc)
                 finally:
@@ -1601,8 +1570,7 @@ class AgentLoop:
                                 "Re-published {} leftover message(s) to bus for session {}",
                                 leftover, session_key,
                             )
-                    if not turn_continuation.internal_continuation_pending(msg.metadata):
-                        await delivery.idle()
+                    await delivery.idle()
                     await self._publish_next_deferred_automation_turn(session_key)
         except asyncio.CancelledError:
             if not completion_published and normalize_command_text(msg.content).lower() == "/compact":
@@ -1722,15 +1690,9 @@ class AgentLoop:
             kind=kind,
             delivery=delivery,
             original_user_text=(
-                None
-                if kind is TurnKind.SYSTEM
-                or turn_continuation.internal_continuation_inbound(msg.metadata)
-                else msg.content
+                None if kind is TurnKind.SYSTEM else msg.content
             ),
             turn_wall_started_at=t0,
-            visible_run_started_at=turn_continuation.internal_continuation_run_started_at(
-                msg.metadata,
-            ),
             events=output_events(
                 default=delivery.events,
                 on_progress=on_progress,
@@ -2092,12 +2054,14 @@ class AgentLoop:
             ctx.suppress_response = True
         ctx.usage = result.usage
         ctx.delivery.record_usage(result.round_usages)
-        if ctx.kind is TurnKind.USER:
-            await turn_continuation.maybe_continue_turn(ctx)
-
     async def _persist_turn(self, ctx: TurnContext) -> None:
         session = ctx.require_session()
-        turn_continuation.prepare_save_boundary(ctx)
+        assert ctx.transcript_input is not None
+        ctx.save_skip = turn_continuation.save_skip_for_turn(
+            message_metadata=ctx.msg.metadata,
+            initial_message_count=ctx.transcript_input.message_count,
+            input_persisted_early=ctx.input_persisted_early,
+        )
 
         if (
             ctx.kind is TurnKind.USER
@@ -2108,10 +2072,7 @@ class AgentLoop:
 
         latency_started_at = (
             ctx.visible_run_started_at
-            if (
-                ctx.kind is TurnKind.SYSTEM
-                or turn_continuation.internal_continuation_inbound(ctx.msg.metadata)
-            )
+            if ctx.kind is TurnKind.SYSTEM
             and ctx.visible_run_started_at is not None
             else ctx.turn_wall_started_at
         )

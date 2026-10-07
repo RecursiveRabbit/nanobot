@@ -38,7 +38,6 @@ import type {
   OutboundMcpPresetMention,
   OutboundMedia,
   SessionMention,
-  GoalStateWsPayload,
   MessageDeliveryStatus,
   RecoveryState,
   RetryStatus,
@@ -249,12 +248,10 @@ export function useNanobotStream(
   /** Whether ``messages`` belongs to the current ``chatId`` after a session switch. */
   messagesReady: boolean;
   isStreaming: boolean;
-  /** Unix epoch seconds when the current user turn started (WebSocket ``goal_status``). */
+  /** Unix epoch seconds when the current user turn started (WebSocket ``turn_status``). */
   runStartedAt: number | null;
   /** Transient model retry state for the active turn. */
   retryStatus: RetryStatus | null;
-  /** Latest sustained goal for this ``chatId`` (``goal_state`` WS events). */
-  goalState: GoalStateWsPayload | undefined;
   recoveryState: RecoveryState | null;
   continueRecovery: () => Promise<void>;
   dismissRecovery: () => Promise<void>;
@@ -291,7 +288,6 @@ export function useNanobotStream(
   /** Unix epoch seconds when the current user turn started; cleared on ``idle``. */
   const [runStartedAt, setRunStartedAt] = useState<number | null>(initialRunStartedAt);
   const [retryStatus, setRetryStatus] = useState<RetryStatus | null>(null);
-  const [goalState, setGoalState] = useState<GoalStateWsPayload | undefined>(undefined);
   const [recoveryState, setRecoveryState] = useState<RecoveryState | null>(null);
   const [streamError, setStreamError] = useState<StreamError | null>(null);
   const buffer = useRef<StreamBuffer | null>(null);
@@ -737,7 +733,6 @@ export function useNanobotStream(
     setStreamError(null);
     setRunStartedAt(restoredRunStartedAt);
     setRetryStatus(null);
-    setGoalState(chatId ? client.getGoalState(chatId) : undefined);
     setRecoveryState(null);
     buffer.current = null;
     activeAssistantRef.current = null;
@@ -933,12 +928,7 @@ export function useNanobotStream(
         return;
       }
 
-      if (ev.event === "goal_state") {
-        setGoalState(ev.goal_state);
-        return;
-      }
-
-      if (ev.event === "goal_status") {
+      if (ev.event === "turn_status") {
         if (ev.status === "running" && typeof ev.started_at === "number") {
           setStreamError(null);
           setRunStartedAt(ev.started_at);
@@ -982,9 +972,6 @@ export function useNanobotStream(
 
       if (ev.event === "turn_end") {
         if (typeof ev.turn_id === "string") sideChannelTurnIdsRef.current.delete(ev.turn_id);
-        if ("goal_state" in ev && ev.goal_state != null && typeof ev.goal_state === "object") {
-          setGoalState(ev.goal_state);
-        }
         setRunStartedAt(null);
         setRetryStatus(null);
         // Definitive signal that the turn is fully complete, so stop the
@@ -1460,7 +1447,6 @@ export function useNanobotStream(
     isStreaming,
     runStartedAt,
     retryStatus,
-    goalState,
     recoveryState,
     continueRecovery,
     dismissRecovery,

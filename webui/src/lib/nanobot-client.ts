@@ -8,7 +8,6 @@ import type {
   OutboundMedia,
   SessionMention,
   SidebarStatePayload,
-  GoalStateWsPayload,
   WorkspaceScopePayload,
 } from "./types";
 import { createHostWebSocket } from "./runtime";
@@ -203,7 +202,7 @@ export class NanobotClient {
   private knownChats = new Set<string>();
   /** Temporary chats are connection-owned and intentionally not reattached. */
   private temporaryChatIds = new Set<string>();
-  /** Wall-clock run strip: updated from ``goal_status`` even with no ``onChat`` subscriber. */
+  /** Wall-clock run strip: updated from ``turn_status`` even with no ``onChat`` subscriber. */
   private runStartedAtByChatId = new Map<string, number>();
   /** Per-turn clocks let a rejected newer turn fall back without borrowing its timer. */
   private runStartedAtByTurnKey = new Map<string, number>();
@@ -222,8 +221,6 @@ export class NanobotClient {
   /** Canonically completed turns whose delayed websocket frames must be ignored. */
   private canonicalCompletedTurnIdsByChatId = new Map<string, Set<string>>();
   private static readonly COMPLETED_TURN_FENCE_MAX = 256;
-  /** Latest ``goal_state`` snapshot per ``chat_id`` (multi-session isolation). */
-  private goalStateByChatId = new Map<string, GoalStateWsPayload>();
   private pendingNewChat: PendingChatRequest | null = null;
   private pendingTranscriptions = new Map<string, PendingRequest<string>>();
   private pendingSystemCommands = new Map<string, PendingRequest<void>>();
@@ -314,7 +311,7 @@ export class NanobotClient {
     };
   }
 
-  /** Last ``goal_status`` ``started_at`` (unix sec) for *chatId*, if the turn is running. */
+  /** Last ``turn_status`` ``started_at`` (unix sec) for *chatId*, if the turn is running. */
   getRunStartedAt(chatId: string): number | null {
     const v = this.runStartedAtByChatId.get(chatId);
     return v === undefined ? null : v;
@@ -528,11 +525,6 @@ export class NanobotClient {
     return true;
   }
 
-  /** Last ``goal_state`` payload for *chatId*, if any frame has arrived this connection. */
-  getGoalState(chatId: string): GoalStateWsPayload | undefined {
-    return this.goalStateByChatId.get(chatId);
-  }
-
   private advanceRunGeneration(chatId: string, turnId?: string): void {
     this.runGenerationByChatId.set(chatId, this.getRunGeneration(chatId) + 1);
     if (turnId) {
@@ -701,7 +693,7 @@ export class NanobotClient {
   private isSupersededRunCompletion(chatId: string, ev: InboundEvent): boolean {
     if (
       ev.event !== "turn_end"
-      && !(ev.event === "goal_status" && ev.status === "idle")
+      && !(ev.event === "turn_status" && ev.status === "idle")
     ) {
       return false;
     }
@@ -724,12 +716,12 @@ export class NanobotClient {
     }
   }
 
-  private recordGoalStatusForRunStrip(chatId: string, ev: InboundEvent): void {
+  private recordTurnStatusForRunStrip(chatId: string, ev: InboundEvent): void {
     if (ev.event === "turn_end") {
       this.recordRunCompletion(chatId, ev.turn_id);
       return;
     }
-    if (ev.event !== "goal_status") return;
+    if (ev.event !== "turn_status") return;
     if (ev.status === "running" && typeof ev.started_at === "number") {
       this.advanceRunGeneration(chatId, ev.turn_id);
       if (ev.turn_id) {
@@ -743,16 +735,6 @@ export class NanobotClient {
       if (previous !== ev.started_at) this.emitRunStatus(chatId, ev.started_at);
     } else {
       this.recordRunCompletion(chatId, ev.turn_id);
-    }
-  }
-
-  private recordGoalStateSnapshot(chatId: string, ev: InboundEvent): void {
-    if (ev.event === "goal_state") {
-      this.goalStateByChatId.set(chatId, ev.goal_state);
-      return;
-    }
-    if (ev.event === "turn_end" && ev.goal_state != null && typeof ev.goal_state === "object") {
-      this.goalStateByChatId.set(chatId, ev.goal_state);
     }
   }
 
@@ -1124,7 +1106,7 @@ export class NanobotClient {
       }
     }
     if (
-      (parsed.event === "goal_status" || parsed.event === "turn_end")
+      (parsed.event === "turn_status" || parsed.event === "turn_end")
       && !parsed.turn_id
     ) {
       const fallbackTurnId = this.uniqueUnsettledTurnId(parsed.chat_id);
@@ -1249,9 +1231,8 @@ export class NanobotClient {
     if (chatId) {
       if (this.isCanonicalCompletedTurnEvent(chatId, parsed)) return;
       const supersededRunCompletion = this.isSupersededRunCompletion(chatId, parsed);
-      this.recordGoalStatusForRunStrip(chatId, parsed);
+      this.recordTurnStatusForRunStrip(chatId, parsed);
       if (supersededRunCompletion) return;
-      this.recordGoalStateSnapshot(chatId, parsed);
       this.dispatch(chatId, parsed);
     }
   }
@@ -1479,7 +1460,6 @@ export class NanobotClient {
     this.latestRunTurnIdByChatId.delete(chatId);
     this.unsettledRunTurnIdsByChatId.delete(chatId);
     this.canonicalCompletedTurnIdsByChatId.delete(chatId);
-    this.goalStateByChatId.delete(chatId);
     for (const key of [...this.runStartedAtByTurnKey.keys()]) {
       if (key.startsWith(`${chatId}\u0000`)) this.runStartedAtByTurnKey.delete(key);
     }

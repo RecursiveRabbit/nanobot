@@ -487,7 +487,7 @@ def test_fork_session_before_user_index_copies_only_prefix(tmp_path):
     source = manager.get_or_create("websocket:source")
     source.metadata["webui"] = True
     source.metadata["title"] = "Old title"
-    source.metadata["goal_state"] = {"status": "active", "objective": "do not inherit"}
+    source.metadata["pending_user_turn"] = {"content": "do not inherit"}
     source.add_message("user", "round1")
     source.add_message("assistant", "answer1")
     source.add_message("user", "round2 fork me")
@@ -505,7 +505,7 @@ def test_fork_session_before_user_index_copies_only_prefix(tmp_path):
     assert [m["content"] for m in forked.messages] == ["round1", "answer1"]
     assert forked.metadata["webui"] is True
     assert "title" not in forked.metadata
-    assert "goal_state" not in forked.metadata
+    assert "pending_user_turn" not in forked.metadata
     saved = manager.read_session_file("websocket:fork")
     assert [m["content"] for m in saved["messages"]] == ["round1", "answer1"]
 
@@ -516,7 +516,7 @@ def test_fork_session_drops_source_runtime_context(tmp_path):
     content, marker = append_runtime_context(
         "round1",
         [
-            RuntimeContextBlock(source="goal", content="host-only goal guidance"),
+            RuntimeContextBlock(source="note", content="host-only note guidance"),
             RuntimeContextBlock(source="cli_apps", content="attached CLI App context"),
         ],
     )
@@ -541,7 +541,7 @@ def test_fork_session_drops_source_runtime_context(tmp_path):
     model_content = forked.get_history()[0]["content"]
     assert model_content.startswith("round1")
     assert "CLI App Attachment: @drawio" in model_content
-    assert "host-only goal guidance" not in model_content
+    assert "host-only note guidance" not in model_content
 
 
 def test_fork_session_rejects_negative_missing_and_out_of_range(tmp_path):

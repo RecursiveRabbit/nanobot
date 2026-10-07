@@ -1425,17 +1425,7 @@ class WebSocketChannel(BaseChannel):
         for connection in conns:
             await self._safe_send_to(connection, raw, label=f" {body['event']} ")
 
-    async def send_goal_state(self, chat_id: str, blob: dict[str, Any]) -> None:
-        """Push persisted goal-state snapshot for *chat_id* (multi-chat isolation)."""
-        conns = list(self._subs.get(chat_id, ()))
-        if not conns:
-            return
-        body = {"event": "goal_state", "chat_id": chat_id, "goal_state": blob}
-        raw = json.dumps(body, ensure_ascii=False)
-        for connection in conns:
-            await self._safe_send_to(connection, raw, label=" goal_state ")
-
-    async def send_goal_status(
+    async def send_turn_status(
         self,
         chat_id: str,
         status: str,
@@ -1448,7 +1438,7 @@ class WebSocketChannel(BaseChannel):
         if not conns:
             return
         body: dict[str, Any] = {
-            "event": "goal_status",
+            "event": "turn_status",
             "chat_id": chat_id,
             "status": status,
         }
@@ -1458,7 +1448,7 @@ class WebSocketChannel(BaseChannel):
             body["turn_id"] = turn_id
         raw = json.dumps(body, ensure_ascii=False)
         for connection in conns:
-            await self._safe_send_to(connection, raw, label=" goal_status ")
+            await self._safe_send_to(connection, raw, label=" turn_status ")
 
     async def send_session_updated(self, chat_id: str, *, scope: str | None = None) -> None:
         """Notify WebUI clients that a session row should refresh."""

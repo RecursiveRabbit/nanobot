@@ -788,39 +788,6 @@ async def test_runner_does_not_retry_blank_policy_terminal(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("finish_reason", ["refusal", "content_filter"])
-async def test_runner_does_not_auto_continue_goal_after_policy_terminal(
-    finish_reason: str,
-) -> None:
-    from nanobot.agent.runner import AgentRunner
-
-    provider = MagicMock(spec=LLMProvider)
-    provider.chat_stream_with_retry = AsyncMock(return_value=LLMResponse(
-        content="Request blocked by provider policy.",
-        finish_reason=finish_reason,
-    ))
-    tools = MagicMock()
-    tools.get_definitions.return_value = []
-    terminal_injection_callback = AsyncMock(return_value=[])
-
-    result = await AgentRunner().run(make_run_spec(
-        provider,
-        initial_messages=[{"role": "user", "content": "do task"}],
-        tools=tools,
-        model="test-model",
-        max_iterations=3,
-        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
-        continuation_callback=lambda: "Continue working.",
-        terminal_injection_callback=terminal_injection_callback,
-    ))
-
-    assert provider.chat_stream_with_retry.await_count == 1
-    terminal_injection_callback.assert_not_awaited()
-    assert result.final_content == "Request blocked by provider policy."
-    assert result.stop_reason == "completed"
-
-
-@pytest.mark.asyncio
 async def test_runner_uses_specific_message_after_empty_finalization_retry():
     """After silent retries + finalization all return empty, stop_reason is empty_final_response."""
     from nanobot.agent.runner import AgentRunner

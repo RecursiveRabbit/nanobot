@@ -18,7 +18,6 @@ from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import Config
 from nanobot.providers.base import LLMResponse, ToolCallRequest
-from nanobot.session.turn_continuation import INTERNAL_CONTINUATION_META
 
 
 class _ContextRecordingTool:
@@ -257,7 +256,6 @@ async def test_agent_loop_restores_outer_request_context_after_runner_exception(
     ("metadata", "expected"),
     [
         ({}, "  original user text  "),
-        ({INTERNAL_CONTINUATION_META: True}, None),
     ],
 )
 async def test_process_message_captures_original_text_before_restore(

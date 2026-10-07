@@ -15,7 +15,6 @@ _FORBIDDEN_RUNTIME_IMPORTS = (
     "nanobot.command",
     "nanobot.runtime_context",
     "nanobot.security.workspace_access",
-    "nanobot.session.goal_state",
     "nanobot.webui.cli_apps_api",
     "nanobot.webui.forking",
     "nanobot.webui.mcp_presets_api",

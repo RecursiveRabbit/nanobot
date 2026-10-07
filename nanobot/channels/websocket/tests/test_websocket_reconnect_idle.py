@@ -22,14 +22,10 @@ async def test_hydrate_after_subscribe_is_quiet_when_no_turn_active():
 
     sent_events = []
 
-    async def mock_send_goal_state(chat_id, blob):
-        sent_events.append(("goal_state", chat_id, blob))
+    async def mock_send_turn_status(chat_id, status, **kwargs):
+        sent_events.append(("turn_status", chat_id, status, kwargs))
 
-    async def mock_send_goal_status(chat_id, status, **kwargs):
-        sent_events.append(("goal_status", chat_id, status, kwargs))
-
-    channel.send_goal_state = mock_send_goal_state
-    channel.send_goal_status = mock_send_goal_status
+    channel.send_turn_status = mock_send_turn_status
 
     with patch("nanobot.webui.session_projection.websocket_turn_wall_started_at", return_value=None):
         await channel._hydrate_after_subscribe("test-chat")
@@ -50,14 +46,10 @@ async def test_hydrate_after_subscribe_pushes_running_when_turn_active():
 
     sent_events = []
 
-    async def mock_send_goal_state(chat_id, blob):
-        sent_events.append(("goal_state", chat_id, blob))
+    async def mock_send_turn_status(chat_id, status, **kwargs):
+        sent_events.append(("turn_status", chat_id, status, kwargs))
 
-    async def mock_send_goal_status(chat_id, status, **kwargs):
-        sent_events.append(("goal_status", chat_id, status, kwargs))
-
-    channel.send_goal_state = mock_send_goal_state
-    channel.send_goal_status = mock_send_goal_status
+    channel.send_turn_status = mock_send_turn_status
 
     with (
         patch(
@@ -71,7 +63,7 @@ async def test_hydrate_after_subscribe_pushes_running_when_turn_active():
     ):
         await channel._hydrate_after_subscribe("test-chat")
 
-    running_events = [e for e in sent_events if e[0] == "goal_status" and e[2] == "running"]
+    running_events = [e for e in sent_events if e[0] == "turn_status" and e[2] == "running"]
     assert len(running_events) == 1
     assert running_events[0][3]["started_at"] == 1234567890.0
     assert running_events[0][3]["turn_id"] == "turn-active"

@@ -825,7 +825,6 @@ class RecoveryCoordinator:
                     "_wants_stream": True,
                     WEBUI_TURN_METADATA_KEY: f"recovery:{recovery_id}",
                     RECOVERY_INBOUND_METADATA_KEY: recovery_id,
-                    turn_continuation.INTERNAL_CONTINUATION_META: True,
                     turn_continuation.SKIP_USER_PERSIST_META: True,
                 },
                 session_key_override=session.key,

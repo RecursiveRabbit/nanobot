@@ -143,14 +143,12 @@ _TEMPLATE_GROUPS = {
     "agent/consolidator_archive.md": "Compaction",
     "agent/cron_reminder.md": "Scheduled work",
     "agent/max_iterations_message.md": "Turns",
-    "agent/goal_runtime.md": "Goals & subagents",
-    "agent/evaluator.md": "Goals & subagents",
-    "agent/subagent_announce.md": "Goals & subagents",
-    "agent/subagent_system.md": "Goals & subagents",
+    "agent/evaluator.md": "Subagents",
+    "agent/subagent_announce.md": "Subagents",
+    "agent/subagent_system.md": "Subagents",
 }
 
 _TEMPLATE_ADVANCED = {
-    "agent/goal_runtime.md": True,
     "agent/evaluator.md": True,
     "agent/subagent_announce.md": True,
     "agent/subagent_system.md": True,

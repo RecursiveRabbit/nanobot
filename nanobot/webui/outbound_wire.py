@@ -86,7 +86,6 @@ class RetryStatusWirePayload(_ChatWirePayload):
 class TurnEndWirePayload(_ChatWirePayload):
     event: Literal["turn_end"]
     latency_ms: NotRequired[int]
-    goal_state: NotRequired[dict[str, Any]]
     usage: NotRequired[dict[str, int]]
     round_usages: NotRequired[list[dict[str, int]]]
     context_window_tokens: NotRequired[int]
@@ -210,8 +209,6 @@ def encode_turn_end(
         payload["turn_id"] = turn_id
     if event.latency_ms is not None:
         payload["latency_ms"] = int(event.latency_ms)
-    if event.goal_state is not None:
-        payload["goal_state"] = event.goal_state
     if event.usage is not None:
         payload["usage"] = event.usage.to_turn_dict()
     if event.round_usages:

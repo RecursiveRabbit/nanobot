@@ -333,15 +333,6 @@ interface AgentUIBlob {
   data?: unknown;
 }
 
-/** WebSocket snapshot for sustained goals (`goal_state` events; keyed by ``chat_id``). */
-export interface GoalStateWsPayload {
-  active: boolean;
-  status?: "active" | "blocked";
-  ui_summary?: string;
-  objective?: string;
-  recap?: string;
-}
-
 export interface ToolProgressEvent {
   version?: number;
   phase?: "start" | "end" | "error" | string;
@@ -1438,8 +1429,6 @@ export type InboundEvent =
       usage?: TurnUsage;
       round_usages?: RoundUsage[];
       context_window_tokens?: number;
-      /** Authoritative sustained-goal snapshot for this chat (same shape as ``goal_state`` events). */
-      goal_state?: GoalStateWsPayload;
       outcome?: "completed" | "failed" | "cancelled" | "interrupted";
       failure_kind?: string;
       failure_error_kind?: string;
@@ -1447,18 +1436,13 @@ export type InboundEvent =
       failure_message?: string;
     } & InboundTurnMetadata)
   | ({
-      event: "goal_status";
+      event: "turn_status";
       chat_id: string;
       /** Turn executing (user message through agent loop). */
       status: "running" | "idle";
       /** Server ``time.time()`` when ``status`` is ``running``. */
       started_at?: number;
     } & InboundTurnMetadata)
-  | {
-      event: "goal_state";
-      chat_id: string;
-      goal_state: GoalStateWsPayload;
-    }
   | {
       event: "session_updated";
       chat_id: string;

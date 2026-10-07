@@ -114,15 +114,6 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         accepts_args=True,
     ),
     BuiltinCommandSpec(
-        "/goal",
-        "Start long-running goal",
-        "Tell the agent to treat the request as a long-running goal.",
-        "activity",
-        "<goal>",
-        lifecycle="agent_turn_with_args",
-        accepts_args=True,
-    ),
-    BuiltinCommandSpec(
         "/trigger",
         "Create named local trigger",
         "Create a named CLI trigger bound to this chat session.",
@@ -559,47 +550,6 @@ async def cmd_history(ctx: CommandContext) -> OutboundMessage:
     )
 
 
-async def cmd_goal(ctx: CommandContext) -> OutboundMessage | None:
-    """Mark this turn as an explicit sustained-goal request."""
-    from nanobot.agent.goal_permission import goal_mutation_permission
-
-    goal = ctx.args.strip()
-    if not goal:
-        return OutboundMessage(
-            channel=ctx.msg.channel,
-            chat_id=ctx.msg.chat_id,
-            content="Usage: /goal <long-running task description>",
-            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
-        )
-    if ctx.session is None:
-        return OutboundMessage(
-            channel=ctx.msg.channel,
-            chat_id=ctx.msg.chat_id,
-            content=(
-                "A task is already running for this chat. "
-                "Use `/stop` first, then send `/goal <long-running task description>` again."
-            ),
-            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
-        )
-    if not ctx.is_user_turn:
-        return OutboundMessage(
-            channel=ctx.msg.channel,
-            chat_id=ctx.msg.chat_id,
-            content="Goal mode can only be started by a user `/goal <task>` command.",
-            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
-        )
-
-    ctx.turn_scopes.append(goal_mutation_permission(True))
-    ctx.msg.metadata = {
-        **dict(ctx.msg.metadata or {}),
-        "original_command": "/goal",
-        "original_content": ctx.raw,
-        "goal_requested": True,
-        "goal_started_at": time.time(),
-    }
-    ctx.msg.content = ctx.raw
-    return None
-
 
 async def cmd_pairing(ctx: CommandContext) -> OutboundMessage:
     """List, approve, deny or revoke pairing requests."""
@@ -739,8 +689,6 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.prefix("/model ", cmd_model)
     router.exact("/history", cmd_history)
     router.prefix("/history ", cmd_history)
-    router.exact("/goal", cmd_goal)
-    router.prefix("/goal ", cmd_goal)
     router.exact("/trigger", cmd_trigger)
     router.prefix("/trigger ", cmd_trigger)
     router.exact("/evaluator-prompt", cmd_evaluator_prompt)

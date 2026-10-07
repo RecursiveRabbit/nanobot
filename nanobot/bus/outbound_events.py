@@ -59,7 +59,6 @@ class StreamedResponseEvent(AgentEvent):
 @dataclass(frozen=True)
 class TurnEndEvent(AgentEvent):
     latency_ms: int | None = None
-    goal_state: dict[str, Any] | None = None
     usage: LLMUsage | None = None
     round_usages: tuple[LLMUsage, ...] = ()
     context_window_tokens: int | None = None
@@ -71,14 +70,10 @@ class TurnEndEvent(AgentEvent):
 
 
 @dataclass(frozen=True)
-class GoalStatusEvent(AgentEvent):
+class TurnStatusEvent(AgentEvent):
+    """A turn's wall-clock lifecycle (running/idle), projected to edges."""
     status: str
     started_at: float | None = None
-
-
-@dataclass(frozen=True)
-class GoalStateSyncEvent(AgentEvent):
-    goal_state: dict[str, Any]
 
 
 @dataclass(frozen=True)

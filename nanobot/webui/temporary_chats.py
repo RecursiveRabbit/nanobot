@@ -18,8 +18,6 @@ from nanobot.session.manager import Session, SessionManager
 from nanobot.webui.workspaces import WebUIWorkspaceController
 
 _TEMPORARY_CHAT_DISABLED_TOOLS = frozenset({
-    "create_goal",
-    "update_goal",
     "spawn",
     "cron",
 })

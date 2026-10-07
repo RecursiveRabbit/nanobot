@@ -9,7 +9,6 @@ Start with [Install and Quick Start](../quick-start.md) and get one reply before
 | Build a personal AI agent | [Build a personal AI agent](./build-a-personal-ai-agent.md) |
 | Use the browser workbench | [AI agent WebUI](./ai-agent-webui.md) |
 | Run a self-hosted AI agent | [Self-hosted AI agent](./self-hosted-ai-agent.md) |
-| Run a sustained goal | [Long-running AI agent](./long-running-ai-agent.md) |
 | Add long-term memory | [AI agent memory](./ai-agent-memory.md) |
 
 ## Connect a Chat App

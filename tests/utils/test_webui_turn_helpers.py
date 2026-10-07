@@ -8,7 +8,7 @@ from nanobot.agent.tools.context import RequestContext, request_context
 from nanobot.agent.turn_delivery import TurnDeliveryFactory
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.outbound_events import (
-    GoalStatusEvent,
+    TurnStatusEvent,
     RetryStatusEvent,
     TurnEndEvent,
     TurnModelUpdatedEvent,
@@ -62,7 +62,7 @@ async def test_publish_turn_run_status_running_records_wall_clock() -> None:
     assert wth.websocket_turn_id("chat-a") == "turn-a"
     call = bus.publish_outbound.await_args[0][0]
     assert call.chat_id == "chat-a"
-    assert isinstance(call.event, GoalStatusEvent)
+    assert isinstance(call.event, TurnStatusEvent)
     assert call.event.started_at == t0
 
 
@@ -76,7 +76,7 @@ async def test_publish_turn_run_status_reuses_explicit_wall_clock() -> None:
 
     assert wth.websocket_turn_wall_started_at("chat-a") == 1234.5
     call = bus.publish_outbound.await_args[0][0]
-    assert isinstance(call.event, GoalStatusEvent)
+    assert isinstance(call.event, TurnStatusEvent)
     assert call.event.started_at == 1234.5
 
 

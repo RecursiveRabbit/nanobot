@@ -67,13 +67,11 @@ _RUNTIME_CHECKPOINT_KEY = "runtime_checkpoint"
 _RUNTIME_CHECKPOINT_VERSION = 1
 _RUNTIME_CHECKPOINT_SUFFIX = ".checkpoint.json"
 _FORK_VOLATILE_METADATA_KEYS = {
-    "goal_state",
     "pending_user_turn",
     "pending_user_followups",
     "runtime_checkpoint",
     "session_handle",
     "webui_recovery",
-    "thread_goal",
     "title",
     "title_user_edited",
 }

@@ -1526,7 +1526,7 @@ async def test_session_export_and_restore_preserve_runtime_context(tmp_path):
     bot = Nanobot.from_config(config_path, workspace=tmp_path)
     content, marker = append_runtime_context(
         "visible user text",
-        [RuntimeContextBlock(source="goal", content="stable model-only context")],
+        [RuntimeContextBlock(source="note", content="stable model-only context")],
     )
     source = bot._loop.sessions.get_or_create("sdk:source")
     source.add_message(

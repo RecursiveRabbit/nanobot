@@ -78,14 +78,6 @@ const SLASH_COMMANDS: SlashCommand[] = [
     acceptsArgs: true,
   },
   {
-    command: "/goal",
-    title: "Start a goal",
-    description: "Start a sustained goal.",
-    icon: "activity",
-    lifecycle: "agent_turn_with_args",
-    acceptsArgs: true,
-  },
-  {
     command: "/new",
     title: "New chat",
     description: "Start a new chat.",
@@ -381,7 +373,7 @@ describe("MessageBubble", () => {
     const message: UIMessage = {
       id: "u-command-mention",
       role: "user",
-      content: "/goal ask @zoom to schedule the review",
+      content: "/model ask @zoom to schedule the review",
       createdAt: Date.now(),
     };
 
@@ -393,7 +385,7 @@ describe("MessageBubble", () => {
       />,
     );
 
-    expect(screen.getByTestId("message-slash-command")).toHaveTextContent("/goal");
+    expect(screen.getByTestId("message-slash-command")).toHaveTextContent("/model");
     expect(screen.getByTestId("message-cli-mention-zoom")).toHaveTextContent("@zoom");
   });
 

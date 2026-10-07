@@ -849,7 +849,6 @@ export function ThreadShell({
     isStreaming,
     runStartedAt,
     retryStatus,
-    goalState,
     recoveryState,
     continueRecovery,
     dismissRecovery,
@@ -928,7 +927,6 @@ export function ThreadShell({
     () => recentComposerRoundUsage(displayMessages),
     [displayMessages],
   );
-  const currentGoalState = messagesReady ? goalState : undefined;
   // Decision states freeze the interrupted turn and hand the next action to
   // the recovery notice. ``resuming`` remains active; ``recovered`` is only
   // historical metadata and must not suppress a later normal turn.
@@ -1633,7 +1631,6 @@ export function ThreadShell({
           skills={skills}
           onStop={stop}
           onTranscribeAudio={transcribeAudio}
-          goalState={currentGoalState}
           workspaceScope={workspaceScope}
           workspaceControlsHidden={temporary}
           workspaceDefaultScope={workspaceDefaultScope}
@@ -1685,7 +1682,6 @@ export function ThreadShell({
           skills={skills}
           surfaceRef={composerSurfaceRef}
           onTranscribeAudio={transcribeAudio}
-          goalState={currentGoalState}
           workspaceScope={workspaceScope}
           workspaceControlsHidden={temporary}
           workspaceDefaultScope={workspaceDefaultScope}

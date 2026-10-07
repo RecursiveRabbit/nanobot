@@ -95,7 +95,7 @@ def test_webui_quote_ignores_empty_or_non_text_values(value: object) -> None:
 
 
 def test_public_history_removes_only_trusted_exact_suffix() -> None:
-    block = RuntimeContextBlock(source="goal", content="private goal context")
+    block = RuntimeContextBlock(source="note", content="private note context")
     content, marker = append_runtime_context("visible user text", [block])
     assert marker is not None
     persisted = {
@@ -111,7 +111,7 @@ def test_public_history_removes_only_trusted_exact_suffix() -> None:
 
     user_authored = {
         "role": "user",
-        "content": "visible user text\n\nprivate goal context",
+        "content": "visible user text\n\nprivate note context",
     }
     assert public_history_message(user_authored) == user_authored
 
@@ -122,7 +122,7 @@ def test_public_history_keeps_content_when_marker_does_not_match() -> None:
         "content": "user-edited content",
         RUNTIME_CONTEXT_HISTORY_META: {
             "version": 1,
-            "sources": ["goal"],
+            "sources": ["note"],
             "suffix": "different suffix",
         },
     }
@@ -134,7 +134,7 @@ def test_public_history_keeps_content_when_marker_does_not_match() -> None:
 
 
 def test_sdk_snapshot_hides_runtime_context() -> None:
-    block = RuntimeContextBlock(source="goal", content="private goal context")
+    block = RuntimeContextBlock(source="note", content="private note context")
     content, marker = append_runtime_context("visible user text", [block])
     session = SimpleNamespace(
         key="cli:direct",
@@ -154,7 +154,7 @@ def test_sdk_snapshot_hides_runtime_context() -> None:
 
 
 def test_webui_preview_title_and_backfill_hide_runtime_context() -> None:
-    block = RuntimeContextBlock(source="goal", content="private goal context")
+    block = RuntimeContextBlock(source="note", content="private note context")
     content, marker = append_runtime_context("visible user text", [block])
     persisted = {
         "role": "user",

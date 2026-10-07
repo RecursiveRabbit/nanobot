@@ -50,19 +50,10 @@ def test_attach_fields_tolerate_missing_or_invalid_session_metadata() -> None:
     assert WebUISessionProjection(None).attach_fields("websocket:missing") == {}
 
 
-def test_hydration_events_restore_goal_and_running_turn(
+def test_hydration_events_restore_running_turn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sessions = MagicMock()
-    sessions.read_session_metadata.return_value = {
-        "metadata": {
-            "goal_state": {
-                "status": "active",
-                "objective": "finish boundary split",
-                "ui_summary": "Refactoring",
-            }
-        }
-    }
     monkeypatch.setattr(
         "nanobot.webui.session_projection.websocket_turn_wall_started_at",
         lambda _chat_id: 42.5,
@@ -79,17 +70,7 @@ def test_hydration_events_restore_goal_and_running_turn(
 
     assert events == (
         {
-            "event": "goal_state",
-            "chat_id": "chat-1",
-            "goal_state": {
-                "active": True,
-                "status": "active",
-                "ui_summary": "Refactoring",
-                "objective": "finish boundary split",
-            },
-        },
-        {
-            "event": "goal_status",
+            "event": "turn_status",
             "chat_id": "chat-1",
             "status": "running",
             "started_at": 42.5,

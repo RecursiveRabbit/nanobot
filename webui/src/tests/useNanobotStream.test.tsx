@@ -8,7 +8,6 @@ import { normalizeActivityTimeline } from "@/lib/activity-timeline";
 import type { StreamError } from "@/lib/nanobot-client";
 import type {
   ConnectionStatus,
-  GoalStateWsPayload,
   InboundEvent,
   UIMessage,
 } from "@/lib/types";
@@ -75,16 +74,15 @@ function fakeClient() {
   const errorHandlers = new Set<(error: StreamError) => void>();
   const runStartedAtByChatId = new Map<string, number>();
   const unsettledRunByChatId = new Map<string, boolean>();
-  const goalStateByChatId = new Map<string, GoalStateWsPayload>();
   const requestMutation = vi.fn().mockResolvedValue({});
   let status: ConnectionStatus = "open";
 
-  function recordGoalStatusForRunStrip(chatId: string, ev: InboundEvent) {
+  function recordTurnStatusForRunStrip(chatId: string, ev: InboundEvent) {
     if (ev.event === "turn_end") {
       runStartedAtByChatId.delete(chatId);
       return;
     }
-    if (ev.event !== "goal_status") return;
+    if (ev.event !== "turn_status") return;
     if (ev.status === "running" && typeof ev.started_at === "number") {
       runStartedAtByChatId.set(chatId, ev.started_at);
     } else {
@@ -92,15 +90,6 @@ function fakeClient() {
     }
   }
 
-  function recordGoalStateSnapshot(chatId: string, ev: InboundEvent) {
-    if (ev.event === "goal_state") {
-      goalStateByChatId.set(chatId, ev.goal_state);
-      return;
-    }
-    if (ev.event === "turn_end" && ev.goal_state != null && typeof ev.goal_state === "object") {
-      goalStateByChatId.set(chatId, ev.goal_state);
-    }
-  }
 
   return {
     client: {
@@ -129,9 +118,6 @@ function fakeClient() {
       getRunTurnId() {
         return null;
       },
-      getGoalState(chatId: string) {
-        return goalStateByChatId.get(chatId);
-      },
       hasUnsettledRun(chatId: string) {
         return unsettledRunByChatId.get(chatId) === true;
       },
@@ -155,8 +141,7 @@ function fakeClient() {
       updateUrl: vi.fn(),
     },
     emit(chatId: string, ev: InboundEvent) {
-      recordGoalStatusForRunStrip(chatId, ev);
-      recordGoalStateSnapshot(chatId, ev);
+      recordTurnStatusForRunStrip(chatId, ev);
       const set = handlers.get(chatId);
       set?.forEach((h) => h(ev));
     },
@@ -378,7 +363,7 @@ describe("useNanobotStream", () => {
 
     act(() => {
       fake.emit("chat-reconnect", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "chat-reconnect",
         status: "running",
         started_at: 1_700,
@@ -405,7 +390,7 @@ describe("useNanobotStream", () => {
     act(() => {
       fake.emitStatus("open");
       fake.emit("chat-reconnect", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "chat-reconnect",
         status: "running",
         started_at: 1_800,
@@ -436,7 +421,7 @@ describe("useNanobotStream", () => {
 
     act(() => {
       fake.emit("chat-reconnect-reset", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "chat-reconnect-reset",
         status: "running",
         started_at: 1_700,
@@ -540,7 +525,7 @@ describe("useNanobotStream", () => {
 
     act(() => {
       fake.emit("chat-recovery", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "chat-recovery",
         status: "running",
         started_at: 1_700,
@@ -607,7 +592,7 @@ describe("useNanobotStream", () => {
 
     act(() => {
       fake.emit("chat-recovered-history", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "chat-recovered-history",
         status: "running",
         started_at: 1_700,
@@ -2379,7 +2364,7 @@ describe("useNanobotStream", () => {
     act(() => {
       first = result.current.send("first");
       fake.emit("chat-reject-new", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "chat-reject-new",
         status: "running",
         started_at: 1234,
@@ -2538,7 +2523,7 @@ describe("useNanobotStream", () => {
     act(() => {
       main = result.current.send("main");
       fake.emit("chat-side-reject", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "chat-side-reject",
         status: "running",
         started_at: 9876,
@@ -3224,7 +3209,7 @@ describe("useNanobotStream", () => {
     }
   });
 
-  it("tracks goal_status running and clears on idle", () => {
+  it("tracks turn_status running and clears on idle", () => {
     const fake = fakeClient();
     const { result } = renderHook(() => useNanobotStream("chat-g", EMPTY_MESSAGES), {
       wrapper: wrap(fake.client),
@@ -3235,7 +3220,7 @@ describe("useNanobotStream", () => {
 
     act(() => {
       fake.emit("chat-g", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "chat-g",
         status: "running",
         started_at: 1700,
@@ -3246,7 +3231,7 @@ describe("useNanobotStream", () => {
 
     act(() => {
       fake.emit("chat-g", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "chat-g",
         status: "idle",
       });
@@ -3329,7 +3314,7 @@ describe("useNanobotStream", () => {
 
     act(() => {
       fake.emit("chat-g", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "chat-g",
         status: "running",
         started_at: 1700,
@@ -3348,7 +3333,7 @@ describe("useNanobotStream", () => {
     expect(result.current.isStreaming).toBe(false);
   });
 
-  it("restores runStartedAt after switching away and back when goal_status was recorded without a subscriber", () => {
+  it("restores runStartedAt after switching away and back when turn_status was recorded without a subscriber", () => {
     const fake = fakeClient();
     const { result, rerender } = renderHook(
       ({ chatId }: { chatId: string }) => useNanobotStream(chatId, EMPTY_MESSAGES),
@@ -3360,7 +3345,7 @@ describe("useNanobotStream", () => {
 
     act(() => {
       fake.emit("chat-a", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "chat-a",
         status: "running",
         started_at: 4242,
@@ -3375,7 +3360,7 @@ describe("useNanobotStream", () => {
 
     act(() => {
       fake.emit("chat-a", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "chat-a",
         status: "running",
         started_at: 9001,
@@ -3385,49 +3370,6 @@ describe("useNanobotStream", () => {
     rerender({ chatId: "chat-a" });
     expect(result.current.runStartedAt).toBe(9001);
     expect(result.current.isStreaming).toBe(true);
-  });
-
-  it("tracks goal_state per chat and restores after switching sessions", () => {
-    const fake = fakeClient();
-    const { result, rerender } = renderHook(
-      ({ chatId }: { chatId: string }) => useNanobotStream(chatId, EMPTY_MESSAGES),
-      {
-        wrapper: wrap(fake.client),
-        initialProps: { chatId: "chat-a" },
-      },
-    );
-
-    act(() => {
-      fake.emit("chat-a", {
-        event: "goal_state",
-        chat_id: "chat-a",
-        goal_state: { active: true, ui_summary: "Alpha" },
-      });
-    });
-    expect(result.current.goalState).toEqual({ active: true, ui_summary: "Alpha" });
-
-    act(() => {
-      fake.emit("chat-b", {
-        event: "goal_state",
-        chat_id: "chat-b",
-        goal_state: { active: true, objective: "Beta task" },
-      });
-    });
-
-    rerender({ chatId: "chat-b" });
-    expect(result.current.goalState).toEqual({ active: true, objective: "Beta task" });
-
-    rerender({ chatId: "chat-a" });
-    expect(result.current.goalState).toEqual({ active: true, ui_summary: "Alpha" });
-
-    act(() => {
-      fake.emit("chat-a", {
-        event: "goal_state",
-        chat_id: "chat-a",
-        goal_state: { active: false },
-      });
-    });
-    expect(result.current.goalState).toEqual({ active: false });
   });
 
 });

@@ -13,7 +13,7 @@ from nanobot.agent.tools.context import current_request_context
 from nanobot.agent.tools.filesystem import WriteFileTool
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.outbound_events import (
-    GoalStatusEvent,
+    TurnStatusEvent,
     ProgressEvent,
     SessionUpdatedEvent,
     StreamDeltaEvent,
@@ -372,87 +372,6 @@ class TestToolEventProgress:
         assert isinstance(outbound.event, ProgressEvent)
         assert outbound.event.file_edit_events == edit_events
 
-    @pytest.mark.asyncio
-    async def test_goal_turn_keeps_file_edit_progress_for_webui(self, tmp_path: Path) -> None:
-        """The /goal command rewrites the prompt but must not bypass WebUI file-edit progress."""
-        bus = MessageBus()
-        provider = MagicMock()
-        provider.get_default_model.return_value = "test-model"
-        call_count = 0
-
-        async def chat_stream_with_retry(**kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return LLMResponse(
-                    content=None,
-                    tool_calls=[
-                        ToolCallRequest(
-                            id="call-goal-write",
-                            name="write_file",
-                            arguments={
-                                "path": "goal.txt",
-                                "content": "one\ntwo\nthree\n",
-                            },
-                        )
-                    ],
-                    usage=None,
-                )
-            return LLMResponse(content="Done", tool_calls=[], usage=None)
-
-        provider.chat_stream_with_retry = chat_stream_with_retry
-        provider.chat_with_retry = AsyncMock()
-        loop = AgentLoop(
-            bus=bus,
-            provider=provider,
-            workspace=tmp_path,
-            model="test-model",
-            hook_factories=[create_file_edit_activity_hook],
-        )
-        tool = WriteFileTool(workspace=tmp_path)
-        loop.tools.get_definitions = MagicMock(return_value=[
-            {"type": "function", "function": {"name": "write_file"}},
-        ])
-        loop.tools.prepare_call = MagicMock(
-            return_value=(
-                tool,
-                {"path": "goal.txt", "content": "one\ntwo\nthree\n"},
-                None,
-            ),
-        )
-
-        await loop._dispatch(InboundMessage(
-            channel="websocket",
-            sender_id="u1",
-            chat_id="chat1",
-            content="/goal create goal file",
-            metadata={"_wants_stream": True},
-        ))
-
-        outbound = []
-        while bus.outbound_size > 0:
-            outbound.append(await bus.consume_outbound())
-
-        edit_events = [
-            event
-            for msg in outbound
-            if isinstance(msg.event, ProgressEvent)
-            for event in msg.event.file_edit_events or []
-        ]
-        assert any(
-            event["status"] == "editing"
-            and event["approximate"]
-            and event["added"] == 0
-            for event in edit_events
-        )
-        assert any(
-            event["status"] == "done"
-            and not event["approximate"]
-            and event["added"] == 3
-            and event.get("diff", {}).get("format") == "unified"
-            for event in edit_events
-        )
-        provider.chat_with_retry.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_non_streaming_channel_does_not_publish_codex_progress_deltas(
@@ -523,7 +442,7 @@ class TestToolEventProgress:
         final = [
             m for m in outbound
             if not isinstance(m.event, StreamDeltaEvent | StreamEndEvent)
-            and not isinstance(m.event, TurnEndEvent | GoalStatusEvent)
+            and not isinstance(m.event, TurnEndEvent | TurnStatusEvent)
         ]
 
         assert [m.content for m in deltas] == ["Hel", "lo"]
@@ -848,7 +767,7 @@ class TestToolEventProgress:
         statuses = [
             message.event.status
             for message in outbound
-            if isinstance(message.event, GoalStatusEvent)
+            if isinstance(message.event, TurnStatusEvent)
         ]
         assert statuses == ["running", "idle"]
         assert [
@@ -869,7 +788,7 @@ class TestToolEventProgress:
             for message in outbound
             if isinstance(
                 message.event,
-                GoalStatusEvent
+                TurnStatusEvent
                 | ProgressEvent
                 | StreamDeltaEvent
                 | StreamEndEvent
@@ -946,7 +865,7 @@ class TestToolEventProgress:
         final = [
             m for m in outbound
             if not isinstance(m.event, StreamDeltaEvent | StreamEndEvent)
-            and not isinstance(m.event, TurnEndEvent | GoalStatusEvent)
+            and not isinstance(m.event, TurnEndEvent | TurnStatusEvent)
         ]
 
         assert [m.content for m in deltas] == ["partial", "full retry response"]
@@ -1077,13 +996,13 @@ class TestToolEventProgress:
 
         error_msgs = [m for m in outbound if m.content == "Sorry, I encountered an error."]
         turn_end_msgs = [m for m in outbound if isinstance(m.event, TurnEndEvent)]
-        statuses = [m for m in outbound if isinstance(m.event, GoalStatusEvent)]
+        statuses = [m for m in outbound if isinstance(m.event, TurnStatusEvent)]
 
         assert len(error_msgs) == 1
         assert len(turn_end_msgs) == 1
         assert turn_end_msgs[0].content == ""
         assert turn_end_msgs[0].chat_id == "chat1"
-        assert [m.event.status for m in statuses if isinstance(m.event, GoalStatusEvent)] == ["idle"]
+        assert [m.event.status for m in statuses if isinstance(m.event, TurnStatusEvent)] == ["idle"]
         assert outbound.index(error_msgs[0]) < outbound.index(turn_end_msgs[0])
         assert outbound.index(turn_end_msgs[0]) < outbound.index(statuses[-1])
 

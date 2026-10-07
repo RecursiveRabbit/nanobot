@@ -9,8 +9,6 @@ from loguru import logger
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.outbound_events import (
     ContextCompactionEvent,
-    GoalStateSyncEvent,
-    GoalStatusEvent,
     ProgressEvent,
     RetryStatusEvent,
     RetryWaitEvent,
@@ -18,6 +16,7 @@ from nanobot.bus.outbound_events import (
     SessionUpdatedEvent,
     TurnEndEvent,
     TurnModelUpdatedEvent,
+    TurnStatusEvent,
     UserInputEvent,
 )
 from nanobot.session.webui_turns import clear_websocket_turn_if_current
@@ -80,9 +79,7 @@ class WebUIOutboundTransport(Protocol):
         turn_owner: str | None = None,
     ) -> None: ...
 
-    async def send_goal_state(self, chat_id: str, blob: dict[str, Any]) -> None: ...
-
-    async def send_goal_status(
+    async def send_turn_status(
         self,
         chat_id: str,
         status: str,
@@ -124,10 +121,7 @@ class WebUIOutboundProjector:
             webui_session_key(chat_id),
             chat_id,
         ):
-            if event["event"] == "goal_state":
-                await self._transport.send_goal_state(chat_id, event["goal_state"])
-                continue
-            await self._transport.send_goal_status(
+            await self._transport.send_turn_status(
                 chat_id,
                 "running",
                 started_at=event["started_at"],
@@ -154,8 +148,7 @@ class WebUIOutboundProjector:
                 UserInputEvent,
                 TurnEndEvent,
                 SessionUpdatedEvent,
-                GoalStatusEvent,
-                GoalStateSyncEvent,
+                TurnStatusEvent,
                 ContextCompactionEvent,
             )
             log = (
@@ -196,21 +189,14 @@ class WebUIOutboundProjector:
                     **kwargs,
                 )
             return
-        if isinstance(event, GoalStateSyncEvent):
-            if conns:
-                await self._transport.send_goal_state(
-                    msg.chat_id,
-                    event.goal_state or {"active": False},
-                )
-            return
-        if isinstance(event, GoalStatusEvent):
+        if isinstance(event, TurnStatusEvent):
             turn_id = (msg.metadata or {}).get(WEBUI_TURN_METADATA_KEY)
             current_turn_id = turn_id if isinstance(turn_id, str) else None
             turn_owner = (msg.metadata or {}).get(WEBSOCKET_TURN_OWNER_METADATA_KEY)
             current_turn_owner = turn_owner if isinstance(turn_owner, str) else None
             try:
                 if conns and event.status in ("running", "idle"):
-                    await self._transport.send_goal_status(
+                    await self._transport.send_turn_status(
                         msg.chat_id,
                         event.status,
                         started_at=event.started_at,
