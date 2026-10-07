@@ -91,6 +91,19 @@ never truncate, restore-or-nothing, no watcher scripts, a gateway never
 restarts itself in-turn, and — when given the choice between correct and
 easy — we always bump the lamp.
 
+## Running the tests
+
+The suite's home is the checked-in test venv: `.venv-test/bin/python -m pytest
+tests/ -q`. Commit messages cite its counts ("Suite 5681 passed"), so compare
+against the same env or the numbers mean nothing. Two environmental
+signatures are known and are NOT regressions: the matrix channel needs the
+`nh3` extra (absent from the test venv — deselect
+`tests/channels/test_channel_setup.py::test_every_runtime_channel_field_has_a_webui_contract`),
+and three webui-foreground tests fail under node 18's toolchain (`tsc`
+missing). Running the suite from a bare `uv` env instead shows ~51 failures
+across the consolidator/context suites — that signature is the env, never
+the code. Check the env before opening an inquest.
+
 ## License & credit
 
 MIT (see [LICENSE](./LICENSE)), as upstream. nanobot is by Xubin Ren and the
