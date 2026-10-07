@@ -406,6 +406,28 @@ describe("ThreadComposer", () => {
     expect(input).not.toHaveFocus();
   });
 
+  it("inserts a newline on Enter and sends on Shift+Enter", () => {
+    const onSend = vi.fn();
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        placeholder="Type your message..."
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "line one" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(input).toHaveValue("line one");
+
+    fireEvent.change(input, { target: { value: "line one\nline two" } });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+
+    expect(onSend).toHaveBeenCalledWith("line one\nline two", undefined, undefined);
+  });
+
   it("focuses and sends a removable quoted answer excerpt", async () => {
     const onSend = vi.fn();
     const onQuotedContextChange = vi.fn();
@@ -1452,68 +1474,7 @@ describe("ThreadComposer", () => {
     expect(screen.getByLabelText("Paste path")).toBeInTheDocument();
   });
 
-  it("closes the sustained goal through its existing drawer", () => {
-    const { container, rerender } = render(
-      <ThreadComposer
-        onSend={vi.fn()}
-        placeholder="Type your message..."
-        goalState={{
-          active: true,
-          objective: "Ship the release",
-          ui_summary: "Preparing release",
-        }}
-      />,
-    );
-
-    const drawer = container.querySelector("[data-composer-status-drawer]");
-    expect(drawer).not.toBeNull();
-    expect(drawer).toHaveAttribute("data-state", "open");
-    expect(drawer).not.toHaveAttribute("aria-hidden");
-    const status = screen.getByRole("status");
-    expect(status).toHaveClass("composer-status-drawer-content");
-
-    rerender(
-      <ThreadComposer
-        onSend={vi.fn()}
-        placeholder="Type your message..."
-        goalState={{ active: false }}
-      />,
-    );
-
-    expect(container.querySelector("[data-composer-status-drawer]")).toBe(drawer);
-    expect(drawer).toHaveAttribute("data-state", "closed");
-    expect(drawer).toHaveAttribute("aria-hidden", "true");
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
-    expect(drawer?.querySelector('[role="status"]')).toBe(status);
-
-    fireEvent.transitionEnd(drawer as Element, { propertyName: "grid-template-rows" });
-    expect(container.querySelector("[data-composer-status-drawer]")).toBeNull();
-  });
-
-  it("opens an upward anchored goal panel with markdown content when expand is clicked", async () => {
-    const longObjective =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz0123456789GoalTail";
-    render(
-      <ThreadComposer
-        onSend={vi.fn()}
-        placeholder="Type your message..."
-        goalState={{
-          active: true,
-          objective: longObjective,
-          ui_summary: "Short summary for strip",
-        }}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Show full goal" }));
-
-    const dialog = await screen.findByRole("dialog", { name: "Goal" });
-    expect(dialog).toBeInTheDocument();
-    expect(dialog).toHaveTextContent("Short summary for strip");
-    expect(dialog).toHaveTextContent(longObjective);
-  });
-
-  it("opens a slash command palette and inserts the selected command", () => {
+      it("opens a slash command palette and inserts the selected command", () => {
     const onSend = vi.fn();
     render(
       <ThreadComposer
@@ -2021,7 +1982,7 @@ describe("ThreadComposer", () => {
     );
 
     expect(screen.getByTestId("composer-session-mention-Plan")).toHaveTextContent("@Plan");
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     fireEvent.click(screen.getByRole("button", { name: "Guide" }));
 
     expect(onSend).toHaveBeenCalledWith("@Plan", undefined, {
@@ -2471,13 +2432,13 @@ describe("ThreadComposer", () => {
     const input = screen.getByLabelText("Message input");
     fireEvent.change(input, { target: { value: "/stop" } });
     fireEvent.keyDown(input, { key: "Escape" });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 
     expect(onStop).toHaveBeenCalledTimes(1);
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("keeps goal task commands on the normal agent turn path", () => {
+  it("keeps agent-turn commands on the normal agent turn path", () => {
     const onSend = vi.fn();
     render(
       <ThreadComposer
@@ -2485,11 +2446,11 @@ describe("ThreadComposer", () => {
         placeholder="Type your message..."
         slashCommands={[
           {
-            command: "/goal",
-            title: "Start long-running goal",
-            description: "Tell the agent to treat the request as a long-running goal.",
-            icon: "activity",
-            argHint: "<goal>",
+            command: "/model",
+            title: "Show or switch model",
+            description: "Show the active model or switch configuration.",
+            icon: "brain",
+            argHint: "[preset]",
             lifecycle: "agent_turn_with_args",
             acceptsArgs: true,
           },
@@ -2498,17 +2459,17 @@ describe("ThreadComposer", () => {
     );
 
     const input = screen.getByLabelText("Message input");
-    fireEvent.change(input, { target: { value: "/goal fix the release blocker" } });
+    fireEvent.change(input, { target: { value: "/model fix the release blocker" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
     expect(onSend).toHaveBeenCalledWith(
-      "/goal fix the release blocker",
+      "/model fix the release blocker",
       undefined,
       undefined,
     );
   });
 
-  it("keeps goal usage commands on the side-channel path", () => {
+  it("keeps usage commands on the side-channel path", () => {
     const onSend = vi.fn();
     render(
       <ThreadComposer
@@ -2516,11 +2477,11 @@ describe("ThreadComposer", () => {
         placeholder="Type your message..."
         slashCommands={[
           {
-            command: "/goal",
-            title: "Start long-running goal",
-            description: "Tell the agent to treat the request as a long-running goal.",
-            icon: "activity",
-            argHint: "<goal>",
+            command: "/model",
+            title: "Show or switch model",
+            description: "Show the active model or switch configuration.",
+            icon: "brain",
+            argHint: "[preset]",
             lifecycle: "agent_turn_with_args",
             acceptsArgs: true,
           },
@@ -2529,10 +2490,10 @@ describe("ThreadComposer", () => {
     );
 
     const input = screen.getByLabelText("Message input");
-    fireEvent.change(input, { target: { value: "/goal" } });
+    fireEvent.change(input, { target: { value: "/model" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
-    expect(onSend).toHaveBeenCalledWith("/goal", undefined, { sideChannel: true });
+    expect(onSend).toHaveBeenCalledWith("/model", undefined, { sideChannel: true });
   });
 
   it("shows a stop button while streaming", () => {
@@ -2565,7 +2526,7 @@ describe("ThreadComposer", () => {
 
     const input = screen.getByLabelText("Message input");
     fireEvent.change(input, { target: { value: "keep the UI minimal" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 
     expect(onSend).not.toHaveBeenCalled();
     expect(input).toHaveValue("");
@@ -2581,7 +2542,7 @@ describe("ThreadComposer", () => {
     expect(screen.queryByText("keep the UI minimal")).not.toBeInTheDocument();
   });
 
-  it("guides queued guidance when Enter is pressed again", () => {
+  it("guides queued guidance when Shift+Enter is pressed again", () => {
     const onSend = vi.fn();
     render(
       <ThreadComposer
@@ -2594,18 +2555,18 @@ describe("ThreadComposer", () => {
 
     const input = screen.getByLabelText("Message input");
     fireEvent.change(input, { target: { value: "send this guidance now" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 
     expect(onSend).not.toHaveBeenCalled();
     expect(input).toHaveValue("");
     expect(screen.getByText("send this guidance now")).toBeInTheDocument();
 
-    fireEvent.keyDown(input, { key: "Enter", repeat: true });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true, repeat: true });
 
     expect(onSend).not.toHaveBeenCalled();
     expect(screen.getByText("send this guidance now")).toBeInTheDocument();
 
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 
     expect(onSend).toHaveBeenCalledWith(
       "send this guidance now",
@@ -2616,7 +2577,7 @@ describe("ThreadComposer", () => {
     expect(screen.queryByText("send this guidance now")).not.toBeInTheDocument();
   });
 
-  it("disarms the second Enter shortcut when keyboard voice recording starts", async () => {
+  it("disarms the second Shift+Enter shortcut when keyboard voice recording starts", async () => {
     mockVoiceRecorder();
     const onSend = vi.fn();
     const onTranscribeAudio = vi.fn(async () => "voice guidance");
@@ -2632,12 +2593,12 @@ describe("ThreadComposer", () => {
 
     const input = screen.getByLabelText("Message input");
     fireEvent.change(input, { target: { value: "keep this queued" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     fireEvent.keyDown(window, { code: "KeyD", ctrlKey: true, key: "D", shiftKey: true });
 
     expect(await screen.findByLabelText("Recording 0:00")).toBeInTheDocument();
     expect(input).toHaveFocus();
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 
     expect(onSend).not.toHaveBeenCalled();
     expect(screen.getByText("keep this queued")).toBeInTheDocument();
@@ -2647,7 +2608,7 @@ describe("ThreadComposer", () => {
     await waitFor(() => expect(onTranscribeAudio).toHaveBeenCalled());
   });
 
-  it("disarms the second Enter shortcut after stopping the active response", () => {
+  it("disarms the second Shift+Enter shortcut after stopping the active response", () => {
     const onSend = vi.fn();
     const onStop = vi.fn();
     const { rerender } = render(
@@ -2661,9 +2622,9 @@ describe("ThreadComposer", () => {
 
     const input = screen.getByLabelText("Message input");
     fireEvent.change(input, { target: { value: "keep this queued" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 
     expect(onStop).toHaveBeenCalledTimes(1);
     expect(onSend).not.toHaveBeenCalled();
@@ -2685,13 +2646,13 @@ describe("ThreadComposer", () => {
         placeholder="Type your message..."
       />,
     );
-    fireEvent.keyDown(screen.getByLabelText("Message input"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByLabelText("Message input"), { key: "Enter", shiftKey: true });
 
     expect(onSend).not.toHaveBeenCalled();
     expect(screen.getByText("keep this queued")).toBeInTheDocument();
   });
 
-  it("disarms the second Enter shortcut when the composer loses focus", () => {
+  it("disarms the second Shift+Enter shortcut when the composer loses focus", () => {
     const onSend = vi.fn();
     render(
       <ThreadComposer
@@ -2704,10 +2665,10 @@ describe("ThreadComposer", () => {
 
     const input = screen.getByLabelText("Message input");
     fireEvent.change(input, { target: { value: "leave this queued" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     fireEvent.blur(input);
     fireEvent.focus(input);
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 
     expect(onSend).not.toHaveBeenCalled();
     expect(screen.getByText("leave this queued")).toBeInTheDocument();
@@ -2726,10 +2687,10 @@ describe("ThreadComposer", () => {
 
     const input = screen.getByLabelText("Message input");
     fireEvent.change(input, { target: { value: "older guidance" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     fireEvent.change(input, { target: { value: "guide this one now" } });
-    fireEvent.keyDown(input, { key: "Enter" });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 
     expect(onSend).toHaveBeenCalledWith(
       "guide this one now",
@@ -2754,9 +2715,9 @@ describe("ThreadComposer", () => {
 
     const input = screen.getByLabelText("Message input");
     fireEvent.change(input, { target: { value: "first follow-up" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     fireEvent.change(input, { target: { value: "second follow-up" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 
     const queue = screen.getByRole("group", { name: "Queued guidance" });
     expect(queue).toHaveClass("composer-status-strip");
@@ -2820,7 +2781,7 @@ describe("ThreadComposer", () => {
 
     const input = screen.getByLabelText("Message input");
     fireEvent.change(input, { target: { value: "rough follow-up" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 
     const editButton = screen.getByRole("button", { name: "Edit guidance" });
     fireEvent.click(editButton);
@@ -2830,7 +2791,7 @@ describe("ThreadComposer", () => {
     expect(input).toHaveValue("rough follow-up");
     expect(screen.queryByRole("group", { name: "Queued guidance" })).not.toBeInTheDocument();
     fireEvent.change(input, { target: { value: "polished follow-up" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 
     rerender(
       <ThreadComposer
@@ -2859,16 +2820,16 @@ describe("ThreadComposer", () => {
 
     const input = screen.getByLabelText("Message input");
     fireEvent.change(input, { target: { value: "first follow-up" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     fireEvent.change(input, { target: { value: "second follow-up" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 
     fireEvent.click(screen.getAllByRole("button", { name: "Edit guidance" })[0]);
     await waitFor(() => {
       expect(input).toHaveValue("first follow-up");
     });
     fireEvent.change(input, { target: { value: "first follow-up edited" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 
     rerender(
       <ThreadComposer
@@ -2927,7 +2888,7 @@ describe("ThreadComposer", () => {
     await screen.findByText("draft.png");
 
     fireEvent.change(input, { target: { value: "look at this" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 
     expect(onSend).not.toHaveBeenCalled();
     expect(screen.getByRole("group", { name: "Queued guidance" })).toBeInTheDocument();
@@ -2939,7 +2900,7 @@ describe("ThreadComposer", () => {
     expect(screen.getByTestId("composer-chip")).toHaveTextContent("draft.png");
     expect(screen.queryByRole("group", { name: "Queued guidance" })).not.toBeInTheDocument();
 
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     rerender(
       <ThreadComposer
         onSend={onSend}
@@ -2975,9 +2936,9 @@ describe("ThreadComposer", () => {
 
     const input = screen.getByLabelText("Message input");
     fireEvent.change(input, { target: { value: "first follow-up" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     fireEvent.change(input, { target: { value: "second follow-up" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 
     const handles = screen.getAllByLabelText("Drag to reorder");
     const secondRow = screen
@@ -3022,9 +2983,9 @@ describe("ThreadComposer", () => {
 
     const input = screen.getByLabelText("Message input");
     fireEvent.change(input, { target: { value: "first follow-up" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     fireEvent.change(input, { target: { value: "second follow-up" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 
     const handles = screen.getAllByLabelText("Drag to reorder");
     const firstRow = screen
@@ -3065,7 +3026,7 @@ describe("ThreadComposer", () => {
     fireEvent.change(screen.getByLabelText("Message input"), {
       target: { value: "follow-up for A" },
     });
-    fireEvent.keyDown(screen.getByLabelText("Message input"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByLabelText("Message input"), { key: "Enter", shiftKey: true });
     expect(screen.getByText("follow-up for A")).toBeInTheDocument();
     expect(sendA).not.toHaveBeenCalled();
 
@@ -3103,10 +3064,10 @@ describe("ThreadComposer", () => {
 
     const input = screen.getByLabelText("Message input");
     fireEvent.change(input, { target: { value: "remember this follow-up" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     fireEvent.click(screen.getByRole("button", { name: "Edit guidance" }));
     fireEvent.change(input, { target: { value: "remember this edited follow-up" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     expect(screen.getByText("remember this edited follow-up")).toBeInTheDocument();
 
     rerender(

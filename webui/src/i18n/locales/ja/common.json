@@ -1367,13 +1367,8 @@
       "placeholderOpening": "新しいトピックを開いています…",
       "placeholderStreaming": "モデルが応答しています…",
       "inputAria": "メッセージ入力欄",
-      "sendHint": "Enter で送信 · Shift+Enter で改行",
+      "sendHint": "Shift+Enter で送信 · Enter で改行",
       "runRuntimeTitle": "実行中 · {{elapsed}}",
-      "goalStateStrip": "目標 · {{label}}",
-      "goalStateFallback": "目標",
-      "goalStateExpandAria": "目標の全文を表示",
-      "goalStateSheetTitle": "目標",
-      "goalStateCloseAria": "目標を閉じる",
       "send": "メッセージを送信",
       "stop": "応答を停止",
       "quotedContext": "引用したコンテキスト",
@@ -1492,10 +1487,6 @@
             "title": "Dream の記憶",
             "description": "このワークスペースの記憶を Dream がどう整理するかを設定します。"
           },
-          "goal": {
-            "title": "長期目標",
-            "description": "持続的な複数ステップの目標として扱うようエージェントに伝えます。"
-          },
           "trigger": {
             "title": "ローカルトリガーを作成",
             "description": "このチャットセッションに紐づく CLI トリガーを作成します。"
@@ -1514,8 +1505,6 @@
           "recent": "最近"
         },
         "details": {
-          "goalActive": "目標が実行中",
-          "goalReady": "継続的な目標を開始",
           "history": "最近のメッセージを表示",
           "stopRunning": "実行中"
         }

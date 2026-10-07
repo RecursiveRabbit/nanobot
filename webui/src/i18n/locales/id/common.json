@@ -1367,13 +1367,8 @@
       "placeholderOpening": "Membuka topik baru…",
       "placeholderStreaming": "Model sedang merespons…",
       "inputAria": "Input pesan",
-      "sendHint": "Enter untuk kirim · Shift+Enter untuk baris baru",
+      "sendHint": "Shift+Enter untuk kirim · Enter untuk baris baru",
       "runRuntimeTitle": "Berjalan · {{elapsed}}",
-      "goalStateStrip": "Tujuan · {{label}}",
-      "goalStateFallback": "Tujuan",
-      "goalStateExpandAria": "Lihat tujuan lengkap",
-      "goalStateSheetTitle": "Tujuan",
-      "goalStateCloseAria": "Tutup tujuan",
       "send": "Kirim pesan",
       "stop": "Hentikan respons",
       "quotedContext": "Konteks kutipan",
@@ -1492,10 +1487,6 @@
             "title": "Memori Dream",
             "description": "Atur cara Dream menyusun memori ruang kerja ini."
           },
-          "goal": {
-            "title": "Tujuan jangka panjang",
-            "description": "Instruksikan agen memperlakukan ini sebagai tujuan multi-langkah yang berkelanjutan."
-          },
           "trigger": {
             "title": "Buat pemicu lokal",
             "description": "Buat pemicu CLI yang terikat ke sesi chat ini."
@@ -1514,8 +1505,6 @@
           "recent": "Terbaru"
         },
         "details": {
-          "goalActive": "Tujuan sedang berjalan",
-          "goalReady": "Mulai tujuan berkelanjutan",
           "history": "Tampilkan pesan terbaru",
           "stopRunning": "Sedang berjalan"
         }

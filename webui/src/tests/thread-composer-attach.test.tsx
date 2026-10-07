@@ -107,7 +107,7 @@ describe("ThreadComposer — attachments", () => {
 
     const textarea = screen.getByLabelText(/message input/i);
     fireEvent.change(textarea, { target: { value: "hi" } });
-    fireEvent.keyDown(textarea, { key: "Enter" });
+    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
 
     expect(onSend).toHaveBeenCalledTimes(1);
     const [content, images] = onSend.mock.calls[0];
@@ -138,7 +138,7 @@ describe("ThreadComposer — attachments", () => {
 
     const textarea = screen.getByLabelText(/message input/i);
     fireEvent.change(textarea, { target: { value: "summarize" } });
-    fireEvent.keyDown(textarea, { key: "Enter" });
+    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
 
     expect(encodeImage).not.toHaveBeenCalled();
     const [content, attachments] = onSend.mock.calls[0];
@@ -172,7 +172,7 @@ describe("ThreadComposer — attachments", () => {
 
       const textarea = screen.getByLabelText(/message input/i);
       fireEvent.change(textarea, { target: { value: "summarize" } });
-      fireEvent.keyDown(textarea, { key: "Enter" });
+      fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
 
       const [, attachments] = onSend.mock.calls[0];
       expect(attachments[0].media.data_url).toMatch(/^data:text\/csv;base64,/);
@@ -284,7 +284,7 @@ describe("ThreadComposer — attachments", () => {
 
     const textarea = screen.getByLabelText(/message input/i);
     fireEvent.change(textarea, { target: { value: "你好" } });
-    fireEvent.keyDown(textarea, { key: "Enter" });
+    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
 
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Message text is too large (max 4 B)",
@@ -362,14 +362,14 @@ describe("ThreadComposer — attachments", () => {
 
     const textarea = screen.getByLabelText(/message input/i);
     fireEvent.change(textarea, { target: { value: "hello" } });
-    fireEvent.keyDown(textarea, { key: "Enter" });
+    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
     expect(onSend).not.toHaveBeenCalled();
 
     await act(async () => {
       resolveEncode(resolveReady(file));
       await Promise.resolve();
     });
-    fireEvent.keyDown(textarea, { key: "Enter" });
+    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
     expect(onSend).toHaveBeenCalledTimes(1);
   });
 
@@ -423,7 +423,7 @@ describe("ThreadComposer — attachments", () => {
 
     const textarea = screen.getByLabelText(/message input/i);
     fireEvent.change(textarea, { target: { value: "hi" } });
-    fireEvent.keyDown(textarea, { key: "Enter" });
+    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
     expect(onSend).not.toHaveBeenCalled();
   });
 });

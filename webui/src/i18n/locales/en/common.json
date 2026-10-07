@@ -1566,13 +1566,8 @@
       "placeholderOpening": "Opening a new topic…",
       "placeholderStreaming": "Model is responding…",
       "inputAria": "Message input",
-      "sendHint": "Enter to send · Shift+Enter for newline",
+      "sendHint": "Shift+Enter to send · Enter for newline",
       "runRuntimeTitle": "Running · {{elapsed}}",
-      "goalStateStrip": "Goal · {{label}}",
-      "goalStateFallback": "Goal",
-      "goalStateExpandAria": "Show full goal",
-      "goalStateSheetTitle": "Goal",
-      "goalStateCloseAria": "Close goal",
       "send": "Send message",
       "stop": "Stop response",
       "quotedContext": "Quoted context",
@@ -1651,8 +1646,6 @@
           "recent": "Recent"
         },
         "details": {
-          "goalActive": "Goal is running",
-          "goalReady": "Start a sustained objective",
           "history": "Show recent messages",
           "stopRunning": "Running now"
         },
@@ -1700,10 +1693,6 @@
           "dream_prompt": {
             "title": "Dream memory",
             "description": "Tell Dream how to organize this workspace's memory."
-          },
-          "goal": {
-            "title": "Long-running goal",
-            "description": "Tell the agent to treat this as a sustained multi-step goal."
           },
           "trigger": {
             "title": "Create local trigger",

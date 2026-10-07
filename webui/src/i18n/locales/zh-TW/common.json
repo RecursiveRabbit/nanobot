@@ -1367,13 +1367,8 @@
       "placeholderOpening": "正在開啟新話題…",
       "placeholderStreaming": "模型正在回覆…",
       "inputAria": "訊息輸入框",
-      "sendHint": "Enter 送出 · Shift+Enter 換行",
+      "sendHint": "Shift+Enter 送出 · Enter 換行",
       "runRuntimeTitle": "執行中 · {{elapsed}}",
-      "goalStateStrip": "目標 · {{label}}",
-      "goalStateFallback": "目標",
-      "goalStateExpandAria": "檢視完整目標",
-      "goalStateSheetTitle": "目標",
-      "goalStateCloseAria": "關閉目標",
       "send": "送出訊息",
       "stop": "停止回覆",
       "quotedContext": "引用內容",
@@ -1492,10 +1487,6 @@
             "title": "Dream 記憶",
             "description": "設定 Dream 如何整理目前工作區的記憶。"
           },
-          "goal": {
-            "title": "長期目標",
-            "description": "請助理把這則請求當成需要多步驟持續推進的目標。"
-          },
           "trigger": {
             "title": "建立本機觸發器",
             "description": "建立綁定到目前對話的 CLI 觸發器。"
@@ -1514,8 +1505,6 @@
           "recent": "最近"
         },
         "details": {
-          "goalActive": "目標正在執行",
-          "goalReady": "開始一個持續目標",
           "history": "檢視最近訊息",
           "stopRunning": "正在執行"
         }

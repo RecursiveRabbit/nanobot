@@ -27,7 +27,6 @@ function makeClient() {
   const runGenerationByChatId = new Map<string, number>();
   const latestRunTurnIdByChatId = new Map<string, string>();
   const completedTurnIdsByChatId = new Map<string, Set<string>>();
-  const goalStateByChatId = new Map<string, import("@/lib/types").GoalStateWsPayload>();
   let status: ConnectionStatus = "open";
   const advanceRunGeneration = (chatId: string, turnId?: string) => {
     runGenerationByChatId.set(chatId, (runGenerationByChatId.get(chatId) ?? 0) + 1);
@@ -125,7 +124,6 @@ function makeClient() {
     getRunGeneration: (chatId: string) => runGenerationByChatId.get(chatId) ?? 0,
     canReconcileCanonicalCompletion,
     reconcileCanonicalCompletion,
-    getGoalState: (chatId: string) => goalStateByChatId.get(chatId),
     onChat: (chatId: string, handler: (ev: import("@/lib/types").InboundEvent) => void) => {
       let handlers = chatHandlers.get(chatId);
       if (!handlers) {
@@ -160,7 +158,7 @@ function makeClient() {
       const turnId = "turn_id" in ev && typeof ev.turn_id === "string" ? ev.turn_id : null;
       if (turnId && completedTurnIdsByChatId.get(chatId)?.has(turnId)) return;
       if (
-        ev.event === "goal_status"
+        ev.event === "turn_status"
         && ev.status === "running"
         && typeof ev.started_at === "number"
       ) {
@@ -168,14 +166,11 @@ function makeClient() {
         runStartedAtByChatId.set(chatId, ev.started_at);
         for (const h of runStatusHandlers) h(chatId, ev.started_at);
       } else if (
-        (ev.event === "goal_status" && ev.status === "idle")
+        (ev.event === "turn_status" && ev.status === "idle")
         || ev.event === "turn_end"
       ) {
         runStartedAtByChatId.delete(chatId);
         for (const h of runStatusHandlers) h(chatId, null);
-      }
-      if (ev.event === "goal_state") {
-        goalStateByChatId.set(chatId, ev.goal_state);
       }
       for (const h of chatHandlers.get(chatId) ?? []) h(ev);
     },
@@ -672,7 +667,7 @@ describe("ThreadShell", () => {
     const turnId = "turn-automation";
     const startedAt = Date.now() / 1000;
     act(() => client._emitChat("assistant-only-actions", {
-      event: "goal_status",
+      event: "turn_status",
       chat_id: "assistant-only-actions",
       status: "running",
       started_at: startedAt,
@@ -1037,7 +1032,7 @@ describe("ThreadShell", () => {
 
     onOpenModelSettings.mockClear();
     const firstSetupPill = badge.querySelector('[data-needs-setup="true"]');
-    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter", shiftKey: true });
 
     const secondSetupPill = badge.querySelector('[data-needs-setup="true"]');
     expect(onOpenModelSettings).not.toHaveBeenCalled();
@@ -1046,7 +1041,7 @@ describe("ThreadShell", () => {
     expect(input).toHaveValue("hello");
     expect(client.sendMessage).not.toHaveBeenCalled();
 
-    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter", shiftKey: true });
     expect(badge.querySelector('[data-needs-setup="true"]')).not.toBe(secondSetupPill);
   });
 
@@ -1871,7 +1866,7 @@ describe("ThreadShell", () => {
 
     await act(async () => {
       client._emitChat("chat-a", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "chat-a",
         status: "running",
         started_at: Date.now() / 1000,
@@ -2002,7 +1997,7 @@ describe("ThreadShell", () => {
     await waitFor(() => expect(screen.getByText("question")).toBeInTheDocument());
     act(() => {
       client._emitChat("resume-chat", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "resume-chat",
         status: "running",
         started_at: 1_700,
@@ -2380,7 +2375,7 @@ describe("ThreadShell", () => {
     await waitFor(() => expect(screen.getByText("strict question")).toBeInTheDocument());
     act(() => {
       client._emitChat("strict-canonical", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "strict-canonical",
         status: "running",
         started_at: 2_100,
@@ -2453,7 +2448,7 @@ describe("ThreadShell", () => {
     await waitFor(() => expect(screen.getByText("layout question")).toBeInTheDocument());
     act(() => {
       client._emitChat("layout-recheck", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "layout-recheck",
         status: "running",
         started_at: 2_200,
@@ -2560,7 +2555,7 @@ describe("ThreadShell", () => {
     expect(newTurnId).not.toBe("");
     act(() => {
       client._emitChat("chat-version-a", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "chat-version-a",
         status: "running",
         started_at: 2_000,
@@ -2643,7 +2638,7 @@ describe("ThreadShell", () => {
     const newTurnId = "turn-started-during-refresh";
     act(() => {
       client._emitChat("run-generation-chat", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "run-generation-chat",
         status: "running",
         started_at: 3_000,
@@ -2715,7 +2710,7 @@ describe("ThreadShell", () => {
     await waitFor(() => expect(screen.getByText("question")).toBeInTheDocument());
     act(() => {
       client._emitChat("late-frame-chat", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "late-frame-chat",
         status: "running",
         started_at: 4_000,
@@ -2805,7 +2800,7 @@ describe("ThreadShell", () => {
     await waitFor(() => expect(screen.getByText("question")).toBeInTheDocument());
     act(() => {
       client._emitChat("visibility-complete-a", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "visibility-complete-a",
         status: "running",
         started_at: 5_000,
@@ -2865,7 +2860,7 @@ describe("ThreadShell", () => {
     await waitFor(() => expect(screen.getByText("stop")).toBeInTheDocument());
     act(() => {
       client._emitChat("empty-answer", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "empty-answer",
         status: "running",
         started_at: 5_000,
@@ -2942,7 +2937,7 @@ describe("ThreadShell", () => {
     await waitFor(() => expect(screen.getByText("question")).toBeInTheDocument());
     act(() => {
       client._emitChat("before-delta-chat", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "before-delta-chat",
         status: "running",
         started_at: 1_700,
@@ -2951,7 +2946,7 @@ describe("ThreadShell", () => {
     });
     const input = screen.getByRole("textbox", { name: "Message input" });
     fireEvent.change(input, { target: { value: "queued guidance" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     expect(client.sendMessage).not.toHaveBeenCalled();
 
     act(() => client._emitStatus("reconnecting"));
@@ -3038,7 +3033,7 @@ describe("ThreadShell", () => {
     await waitFor(() => expect(screen.getByText("question")).toBeInTheDocument());
     act(() => {
       client._emitChat("active-resume-chat", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "active-resume-chat",
         status: "running",
         started_at: 1_700,
@@ -3054,7 +3049,7 @@ describe("ThreadShell", () => {
     await waitFor(() => expect(screen.getByText("partial answer")).toBeInTheDocument());
     const input = screen.getByRole("textbox", { name: "Message input" });
     fireEvent.change(input, { target: { value: "queued guidance" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     expect(screen.getByText("queued guidance")).toBeInTheDocument();
     expect(client.sendMessage).not.toHaveBeenCalled();
 
@@ -3125,7 +3120,7 @@ describe("ThreadShell", () => {
     await waitFor(() => expect(screen.getByText("research this")).toBeInTheDocument());
     act(() => {
       client._emitChat("timing-chat", {
-        event: "goal_status",
+        event: "turn_status",
         chat_id: "timing-chat",
         status: "running",
         started_at: Date.now() / 1000 - 215,
@@ -3211,7 +3206,7 @@ describe("ThreadShell", () => {
       expect(historyCalls).toBe(1);
       act(() => {
         client._emitChat("visible-chat", {
-          event: "goal_status",
+          event: "turn_status",
           chat_id: "visible-chat",
           status: "running",
           started_at: 6_000,

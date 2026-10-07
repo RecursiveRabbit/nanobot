@@ -1566,12 +1566,8 @@
       "placeholderOpening": "正在打开新话题…",
       "placeholderStreaming": "模型正在回复…",
       "inputAria": "消息输入框",
-      "sendHint": "Enter 发送 · Shift+Enter 换行",
+      "sendHint": "Shift+Enter 发送 · Enter 换行",
       "runRuntimeTitle": "运行中 · {{elapsed}}",
-      "goalStateStrip": "目标 · {{label}}",
-      "goalStateFallback": "目标",
-      "goalStateExpandAria": "查看完整目标",
-      "goalStateSheetTitle": "目标",
       "send": "发送消息",
       "stop": "停止响应",
       "quotedContext": "引用内容",
@@ -1650,8 +1646,6 @@
           "recent": "最近"
         },
         "details": {
-          "goalActive": "目标正在运行",
-          "goalReady": "开始一个持续目标",
           "history": "查看最近消息",
           "stopRunning": "正在运行"
         },
@@ -1700,10 +1694,6 @@
             "title": "Dream 记忆",
             "description": "设置 Dream 如何整理当前工作区的记忆。"
           },
-          "goal": {
-            "title": "长期目标",
-            "description": "让助手把当前请求当作需要多步骤持续推进的目标。"
-          },
           "trigger": {
             "title": "创建本地触发器",
             "description": "创建绑定到当前聊天会话的 CLI 触发器。"
@@ -1749,7 +1739,6 @@
         "transport_too_large": "该附件会超过网关的传输上限",
         "io": "无法读取该文件"
       },
-      "goalStateCloseAria": "关闭目标",
       "workspace": {
         "accessAria": "工作区访问权限",
         "projectAria": "选择项目",

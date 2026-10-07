@@ -1367,13 +1367,8 @@
       "placeholderOpening": "Ouverture d’un nouveau sujet…",
       "placeholderStreaming": "Le modèle est en train de répondre…",
       "inputAria": "Champ de message",
-      "sendHint": "Entrée pour envoyer · Maj+Entrée pour un retour à la ligne",
+      "sendHint": "Maj+Entrée pour envoyer · Entrée pour un retour à la ligne",
       "runRuntimeTitle": "Exécution · {{elapsed}}",
-      "goalStateStrip": "Objectif · {{label}}",
-      "goalStateFallback": "Objectif",
-      "goalStateExpandAria": "Afficher l’objectif complet",
-      "goalStateSheetTitle": "Objectif",
-      "goalStateCloseAria": "Fermer l’objectif",
       "send": "Envoyer le message",
       "stop": "Arrêter la réponse",
       "quotedContext": "Contexte cité",
@@ -1492,10 +1487,6 @@
             "title": "Mémoire Dream",
             "description": "Indiquez à Dream comment organiser la mémoire de cet espace de travail."
           },
-          "goal": {
-            "title": "Objectif long terme",
-            "description": "Demandez à l’agent de traiter ceci comme un objectif multi‑étapes durable."
-          },
           "trigger": {
             "title": "Créer un déclencheur local",
             "description": "Crée un déclencheur CLI lié à cette session de chat."
@@ -1514,8 +1505,6 @@
           "recent": "Récent"
         },
         "details": {
-          "goalActive": "L’objectif est en cours",
-          "goalReady": "Démarrer un objectif durable",
           "history": "Afficher les messages récents",
           "stopRunning": "En cours"
         }

@@ -1381,13 +1381,8 @@
       "placeholderOpening": "Abrindo um novo tópico…",
       "placeholderStreaming": "O modelo está respondendo…",
       "inputAria": "Campo de mensagem",
-      "sendHint": "Enter para enviar · Shift+Enter para nova linha",
+      "sendHint": "Shift+Enter para enviar · Enter para nova linha",
       "runRuntimeTitle": "Executando · {{elapsed}}",
-      "goalStateStrip": "Objetivo · {{label}}",
-      "goalStateFallback": "Objetivo",
-      "goalStateExpandAria": "Mostrar objetivo completo",
-      "goalStateSheetTitle": "Objetivo",
-      "goalStateCloseAria": "Fechar objetivo",
       "send": "Enviar mensagem",
       "stop": "Parar resposta",
       "quotedContext": "Contexto citado",
@@ -1466,8 +1461,6 @@
           "recent": "Recente"
         },
         "details": {
-          "goalActive": "Objetivo em execução",
-          "goalReady": "Iniciar um objetivo sustentado",
           "history": "Mostrar mensagens recentes",
           "stopRunning": "Executando agora"
         },
@@ -1515,10 +1508,6 @@
           "dream_prompt": {
             "title": "Memória do Dream",
             "description": "Diz ao Dream como organizar a memória deste espaço de trabalho."
-          },
-          "goal": {
-            "title": "Objetivo de longa duração",
-            "description": "Diz ao agente para tratar isto como um objetivo sustentado de várias etapas."
           },
           "trigger": {
             "title": "Criar gatilho local",

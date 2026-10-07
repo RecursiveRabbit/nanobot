@@ -260,7 +260,6 @@ vi.mock("@/lib/nanobot-client", async (importOriginal) => {
     };
     getRunStartedAt = () => null;
     getRunTurnId = () => null;
-    getGoalState = () => undefined;
     sendMessage = sendMessageSpy;
     newChat = vi.fn();
     newTemporaryChat = newTemporaryChatSpy;
@@ -3237,7 +3236,7 @@ describe("App layout", () => {
     });
     expect(paneInput).toHaveClass("min-h-[50px]");
     fireEvent.change(paneInput, { target: { value: "route this to the new pane" } });
-    fireEvent.keyDown(paneInput, { key: "Enter" });
+    fireEvent.keyDown(paneInput, { key: "Enter", shiftKey: true });
     await waitFor(() => expect(sendMessageSpy).toHaveBeenCalled());
     expect(sendMessageSpy.mock.calls.at(-1)?.[0]).toBe("chat-pane");
 
