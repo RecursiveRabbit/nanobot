@@ -96,7 +96,7 @@ def _build_test_messages(**kwargs):
     system = "system prompt"
     session_summary = kwargs.get("session_summary")
     if session_summary:
-        system += f"\n\n[Archived Context Summary]\n{session_summary['text']}"
+        system += f"\n\nMost Recent Fold: 20261010-0500\n\n{session_summary['text']}"
     messages = [
         {"role": "system", "content": system},
         *kwargs["history"],
@@ -309,7 +309,7 @@ class TestConsolidatorPromptContract:
     def test_archive_prompt_requests_resident_working_notes(self):
         prompt = _ARCHIVE_PROMPT
 
-        assert "[Archived Context Summary]" in prompt
+        assert "Most Recent Fold: 20261010-0500" in prompt
         assert "your notes" in prompt
         assert "no token target" in prompt
         assert "not an archive" in prompt

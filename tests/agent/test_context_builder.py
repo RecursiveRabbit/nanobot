@@ -347,7 +347,7 @@ class TestBuildSystemPrompt:
         }
         result = builder.build_system_prompt(session_summary=summary)
         assert "Previous chat about Python." in result
-        assert "[Archived Context Summary]" in result
+        assert "Most Recent Fold: 20260819-1000" in result
 
     def test_nothing_summary_builds_the_prompt_without_archived_context(self, tmp_path):
         builder = _builder(tmp_path)
@@ -365,7 +365,7 @@ class TestBuildSystemPrompt:
         builder = _builder(tmp_path)
         result = builder.build_system_prompt()
         assert "## AGENTS.md" not in result
-        assert "[Archived Context Summary]" not in result
+        assert "Most Recent Fold" not in result
 
 
 # ---------------------------------------------------------------------------

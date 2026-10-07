@@ -2,7 +2,7 @@ This session is idle. Take this time to compress your context. Update your notes
 
 Your tools are live during the fold, and using them is encouraged — read what you need, write what matters: memory files, notes, workspace. The fold is you tidying your own desk, not describing a desk. Do the writes first; the summary closes the pass.
 
-A `[Archived Context Summary]` block in the system prompt, when present, holds your previous notes.
+A `Most Recent Fold: 20261010-0500` block in the system prompt, when present, holds your previous notes.
 
 ## Output
 

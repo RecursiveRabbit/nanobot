@@ -4,8 +4,10 @@ import base64
 import mimetypes
 import platform
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
+from zoneinfo import ZoneInfo
 
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.skills import SkillsLoader
@@ -62,11 +64,31 @@ _BOOTSTRAP_SECTION_DEFAULT = register_literal(
 
 _ARCHIVED_SUMMARY_DEFAULT = register_literal(
     "literal:archived_summary_block",
-    "[Archived Context Summary]\n\n"
-    "Previous conversation summary (last active {last_active}):\n"
+    "Most Recent Fold: {fold_stamp}\n\n"
     "{text}",
     group="Compaction",
 )
+
+# The clock law (ratified 2026-10-07): every clock an agent sees reports
+# Detroit; no agent does timezone math. The fold stamp is therefore always
+# rendered in America/Detroit, whatever the host clock says.
+_HOUSE_TIMEZONE = ZoneInfo("America/Detroit")
+
+
+def _fold_stamp(last_active: str) -> str:
+    """Render the fold stamp (``YYYYMMDD-HHMM``, Detroit) from an ISO timestamp.
+
+    Naive timestamps are house-local by the clock law; aware ones are
+    converted. An unparseable value passes through unchanged rather than
+    breaking prompt assembly.
+    """
+    try:
+        parsed = datetime.fromisoformat(last_active)
+    except ValueError:
+        return last_active
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_HOUSE_TIMEZONE)
+    return parsed.astimezone(_HOUSE_TIMEZONE).strftime("%Y%m%d-%H%M")
 
 
 def session_extra(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -187,6 +209,7 @@ class ContextBuilder:
         if session_summary and session_summary["text"] != "(nothing)":
             parts.append(
                 string_text("literal:archived_summary_block", _ARCHIVED_SUMMARY_DEFAULT)
+                .replace("{fold_stamp}", _fold_stamp(session_summary["last_active"]))
                 .replace("{last_active}", session_summary["last_active"])
                 .replace("{text}", session_summary["text"])
             )
