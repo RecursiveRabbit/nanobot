@@ -190,6 +190,12 @@ class CronService:
         self._active_executions = 0
         self._store_dirty = False
         self.max_sleep_ms = max_sleep_ms
+        # Job ids currently executing. A due job already in flight is never
+        # started again — the single-flight guarantee behind at-most-once.
+        self._in_flight: set[str] = set()
+        # Set when _arm_timer is called re-entrantly from within a tick's own
+        # execution; the tick's finally performs the real re-arm.
+        self._rearm_requested = False
 
     def _should_persist_store(self) -> bool:
         """Return whether this instance currently owns the live store."""
@@ -515,8 +521,32 @@ class CronService:
                  if j.enabled and j.state.next_run_at_ms]
         return min(times) if times else None
 
+    @staticmethod
+    def _current_task() -> asyncio.Task[Any] | None:
+        try:
+            return asyncio.current_task()
+        except RuntimeError:
+            # No running event loop (sync caller, e.g. CLI one-shot paths).
+            return None
+
     def _arm_timer(self) -> None:
-        """Schedule the next timer tick."""
+        """Schedule the next timer tick.
+
+        Re-entrancy law (born of the 2026-10-05 double-fires): callers inside
+        a tick's own execution — an agent using the cron tool mid-turn lands
+        here via add_job/update_job/remove_job/enable_job — must never cancel
+        the timer task, because that task IS the task running their turn.
+        Cancelling it killed the in-flight job with CancelledError, and the
+        immediately re-armed timer then saw the job's stale next_run and fired
+        it a second time, milliseconds later. Defer instead: the tick's
+        finally re-arms with the fresh store state.
+        """
+        if self._timer_task is not None and self._timer_task is self._current_task():
+            self._rearm_requested = True
+            return
+        self._schedule_tick()
+
+    def _schedule_tick(self) -> None:
         if self._timer_task:
             self._timer_task.cancel()
 
@@ -560,10 +590,39 @@ class CronService:
             due_jobs = [
                 j for j in store.jobs
                 if j.enabled and j.state.next_run_at_ms and now >= j.state.next_run_at_ms
+                and j.id not in self._in_flight
             ]
 
-            for job in due_jobs:
-                await self._execute_job(job)
+            if due_jobs:
+                # Consume each due schedule BEFORE the side effects run, and
+                # persist that consumption first: a fire that starts is a fire
+                # that happened (at-most-once). A cancel or crash mid-run can
+                # never replay the job from a stale next_run.
+                pre_run_state = [
+                    (job, job.enabled, job.state.next_run_at_ms) for job in due_jobs
+                ]
+                for job in due_jobs:
+                    self._consume_schedule_for_run(job, now)
+                try:
+                    self._save_store()
+                except Exception:
+                    # No durable record of the consumption, so the fire must
+                    # not happen: roll the schedule back and let the failed
+                    # tick handling retry. The side effect stays unstarted.
+                    for job, enabled, next_run_at_ms in pre_run_state:
+                        job.enabled = enabled
+                        job.state.next_run_at_ms = next_run_at_ms
+                    raise
+                self._in_flight.update(job.id for job in due_jobs)
+                try:
+                    # Due jobs run concurrently; the session turn layer
+                    # serializes turns per session. Sequential execution let
+                    # one long job push every later job past its slot
+                    # (observed 2026-10-06/07: a 26-minute noon round delayed
+                    # the 12:07 check to 12:26).
+                    await asyncio.gather(*(self._execute_tracked(j) for j in due_jobs))
+                finally:
+                    self._in_flight.difference_update(job.id for job in due_jobs)
 
             self._save_store()
         except Exception:
@@ -579,8 +638,29 @@ class CronService:
         finally:
             self._active_executions -= 1
             # Always re-arm the timer, even on unexpected failures, so a
-            # single bad tick cannot silently stop all future jobs.
-            self._arm_timer()
+            # single bad tick cannot silently stop all future jobs. Re-entrant
+            # _arm_timer calls made during execution were deferred; this is
+            # the real re-arm they were waiting for.
+            self._rearm_requested = False
+            self._schedule_tick()
+
+    def _consume_schedule_for_run(self, job: CronJob, now_ms: int) -> None:
+        """Take a due job off the due set before its side effects run.
+
+        One-shots are spent by starting; recurring jobs reserve their next
+        slot from the tick time, keeping their phase stable across long runs.
+        """
+        if job.schedule.kind == "at":
+            job.enabled = False
+            job.state.next_run_at_ms = None
+        else:
+            job.state.next_run_at_ms = _compute_next_run(job.schedule, now_ms)
+
+    async def _execute_tracked(self, job: CronJob) -> None:
+        try:
+            await self._execute_job(job)
+        finally:
+            self._in_flight.discard(job.id)
 
     async def _execute_job(self, job: CronJob) -> None:
         """Execute a single job."""
@@ -623,17 +703,13 @@ class CronService:
         ))
         job.state.run_history = job.state.run_history[-self._MAX_RUN_HISTORY:]
 
-        # Handle one-shot jobs
-        if job.schedule.kind == "at":
-            if job.delete_after_run:
-                store = self._require_store()
-                store.jobs = [item for item in store.jobs if item.id != job.id]
-            else:
-                job.enabled = False
-                job.state.next_run_at_ms = None
-        else:
-            # Compute next run
-            job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
+        # One-shot jobs with delete_after_run leave the store once spent.
+        # (The schedule itself was already consumed before execution — see
+        # _consume_schedule_for_run — so nothing here may make the job due
+        # again.)
+        if job.schedule.kind == "at" and job.delete_after_run:
+            store = self._require_store()
+            store.jobs = [item for item in store.jobs if item.id != job.id]
 
     def _append_action(
         self,
@@ -869,7 +945,19 @@ class CronService:
                         return False
                     if not force and not job.enabled:
                         return False
-                    await self._execute_job(job)
+                    if job.id in self._in_flight:
+                        # The timer already has this job; a second copy of
+                        # the side effect is the double-fire we exist to
+                        # prevent.
+                        return False
+                    # A manual run consumes the schedule exactly like a
+                    # timer fire: one-shots are spent, recurring jobs advance.
+                    self._consume_schedule_for_run(job, _now_ms())
+                    self._in_flight.add(job.id)
+                    try:
+                        await self._execute_job(job)
+                    finally:
+                        self._in_flight.discard(job.id)
                     self._save_store()
                     return True
             return False

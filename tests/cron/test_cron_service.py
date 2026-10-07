@@ -1048,12 +1048,12 @@ async def test_save_store_failure_retries_without_replaying_job(tmp_path, monkey
     service._running = True
     service._load_store()
 
-    # Spy on _arm_timer so we can assert the scheduler is re-armed even when
-    # the tick fails, without actually scheduling a real timer task.
+    # Spy on _schedule_tick so we can assert the scheduler is re-armed even
+    # when the tick fails, without actually scheduling a real timer task.
     def arm_spy() -> None:
         arm_calls.append("arm")
 
-    monkeypatch.setattr(service, "_arm_timer", arm_spy)
+    monkeypatch.setattr(service, "_schedule_tick", arm_spy)
 
     job = service.add_job(
         name="persist-failure",
@@ -1079,30 +1079,41 @@ async def test_save_store_failure_retries_without_replaying_job(tmp_path, monkey
     monkeypatch.setattr(service, "_atomic_write", flaky_atomic_write)
     await service._on_timer()
 
-    # The failed tick stays alive and retains the advanced in-memory state,
-    # including when a public read would normally reload from disk.
+    # The schedule-consumption save failed, so the fire did not happen: no
+    # side effect without a durable record of its consumption. The in-memory
+    # schedule was rolled back, the job is still due, and the dirty snapshot
+    # is retried before anything else.
     assert arm_calls == ["arm"], "scheduler must re-arm after a failed tick"
     assert service._active_executions == 0
-    assert calls == [job.id]
+    assert calls == []
     assert service._store_dirty is True
     loaded = service.get_job(job.id)
     assert loaded is not None
-    assert loaded.state.last_run_at_ms is not None
+    assert loaded.state.last_run_at_ms is None
+    assert loaded.state.next_run_at_ms is not None
 
     # Manual execution is a second side-effecting entrypoint.  It must also
     # refuse to run until the previous result can be made durable.
     with pytest.raises(OSError, match="disk full"):
         await service.run_job(job.id, force=True)
-    assert calls == [job.id]
+    assert calls == []
 
     # The next healthy tick is reserved for persisting the dirty snapshot.  It
     # must not reload the stale due record or execute the side effect twice.
     writes_fail = False
     await service._on_timer()
+    assert calls == []
+
+    # The tick after that fires the job exactly once.
+    await service._on_timer()
 
     assert calls == [job.id]
-    assert arm_calls == ["arm", "arm", "arm"]
-    assert save_attempts == 3
+    # Re-arms: failed tick, forced manual run's finally, dirty-flush tick,
+    # healthy firing tick.
+    assert arm_calls == ["arm", "arm", "arm", "arm"]
+    # Save attempts: failed tick, failed manual-run flush, dirty-flush tick,
+    # firing tick's consumption save + post-run save.
+    assert save_attempts == 5
     assert service._store_dirty is False
 
     persisted = CronService(store_path).get_job(job.id)
@@ -1127,7 +1138,7 @@ async def test_timer_execution_is_not_rolled_back_by_list_jobs_reload(tmp_path):
     service = CronService(store_path, on_job=on_job)
     service._running = True
     service._load_store()
-    service._arm_timer = lambda: None
+    service._schedule_tick = lambda: None
 
     job = service.add_job(
         name="race",
@@ -1427,3 +1438,216 @@ def test_load_jobs_skips_null_run_history_elements(tmp_path) -> None:
     assert len(jobs[0].state.run_history) == 1
     assert jobs[0].state.run_history[0].run_at_ms == 1
     assert jobs[0].state.run_history[0].status == "ok"
+
+
+# ── early-fire hardening (born of the 2026-10-05 double-fires: agent-mail
+#    fired twice in six minutes; the 04:07 townline check was cancelled
+#    mid-run and refired at 04:18) ──
+
+
+@pytest.mark.asyncio
+async def test_arm_timer_called_from_within_a_tick_defers_instead_of_cancelling(tmp_path):
+    """A re-entrant _arm_timer must never cancel the task running the jobs.
+
+    Before the hardening, an agent using the cron tool mid-turn cancelled
+    the timer task — which was the task running its own turn — killing the
+    turn with CancelledError.
+    """
+    store_path = tmp_path / "cron" / "jobs.json"
+    service = CronService(store_path, on_job=lambda _: asyncio.sleep(0))
+    service._running = True
+
+    current = asyncio.current_task()
+    assert current is not None
+    service._timer_task = current  # stand in for the tick's own task
+
+    service._arm_timer()
+
+    assert service._rearm_requested is True
+    assert current.cancelling() == 0
+
+
+@pytest.mark.asyncio
+async def test_cron_tool_use_mid_turn_neither_kills_nor_duplicates_the_turn(
+    tmp_path, monkeypatch
+):
+    """The 10-05 incident shape: cron tool use inside a cron-fired turn."""
+    store_path = tmp_path / "cron" / "jobs.json"
+    calls: list[str] = []
+    rearms: list[str] = []
+    service: CronService
+
+    async def on_job(job):
+        calls.append(job.id)
+        # The turn is running inside the timer task; pretend the bookkeeping
+        # already points at it, as it does in a real tick.
+        service._timer_task = asyncio.current_task()
+        # The agent manages cron from inside its own cron-fired turn.
+        service.add_job(
+            name="mid-turn-add",
+            schedule=CronSchedule(kind="every", every_ms=3_600_000),
+            message="added mid-turn",
+            **_bound_chat("mid"),
+        )
+        await asyncio.sleep(0)  # a delivered CancelledError would surface here
+
+    service = CronService(store_path, on_job=on_job)
+    service._running = True
+    service._load_store()
+    monkeypatch.setattr(service, "_schedule_tick", lambda: rearms.append("arm"))
+
+    job = service.add_job(
+        name="fires-then-manages-cron",
+        schedule=CronSchedule(kind="every", every_ms=60_000),
+        message="hello",
+        **_bound_chat(),
+    )
+    job.state.next_run_at_ms = max(1, int(time.time() * 1000) - 1_000)
+    service._save_store()
+    rearms.clear()
+
+    await service._on_timer()
+    await service._on_timer()
+
+    assert calls == [job.id], "turn completed once — never killed, never refired"
+    assert rearms == ["arm", "arm"], "only the two ticks' finallys re-armed"
+    assert service.get_job(job.id) is not None
+    names = {j.name for j in service.list_jobs(include_disabled=True)}
+    assert "mid-turn-add" in names
+
+
+@pytest.mark.asyncio
+async def test_cancelled_job_is_not_refired(tmp_path):
+    """A fire that starts is a fire that happened: cancellation consumes the slot."""
+    store_path = tmp_path / "cron" / "jobs.json"
+    calls: list[str] = []
+
+    async def cancel(job):
+        calls.append(job.id)
+        raise asyncio.CancelledError("turn cancelled")
+
+    service = CronService(store_path, on_job=cancel)
+    service._running = True
+    service._load_store()
+    service._schedule_tick = lambda: None
+
+    job = service.add_job(
+        name="cancel-me",
+        schedule=CronSchedule(kind="every", every_ms=60_000),
+        message="hello",
+        **_bound_chat(),
+    )
+    job.state.next_run_at_ms = max(1, int(time.time() * 1000) - 1_000)
+    service._save_store()
+
+    await service._on_timer()
+    await service._on_timer()
+
+    assert calls == [job.id]
+    loaded = service.get_job(job.id)
+    assert loaded is not None
+    assert loaded.state.last_status == "error"
+    assert loaded.state.next_run_at_ms is not None  # next slot reserved, not replayed
+
+
+@pytest.mark.asyncio
+async def test_cancelled_one_shot_is_spent_not_refired(tmp_path):
+    store_path = tmp_path / "cron" / "jobs.json"
+    calls: list[str] = []
+
+    async def cancel(job):
+        calls.append(job.id)
+        raise asyncio.CancelledError("turn cancelled")
+
+    service = CronService(store_path, on_job=cancel)
+    service._running = True
+    service._load_store()
+    service._schedule_tick = lambda: None
+
+    job = service.add_job(
+        name="one-shot",
+        schedule=CronSchedule(kind="at", at_ms=int(time.time() * 1000) + 3_600_000),
+        message="hello",
+        **_bound_chat(),
+    )
+    job.state.next_run_at_ms = max(1, int(time.time() * 1000) - 1_000)
+    service._save_store()
+
+    await service._on_timer()
+
+    assert calls == [job.id]
+    loaded = service.get_job(job.id)
+    assert loaded is not None
+    assert loaded.enabled is False
+    assert loaded.state.next_run_at_ms is None
+
+    await service._on_timer()
+    assert calls == [job.id]
+
+
+@pytest.mark.asyncio
+async def test_due_jobs_run_concurrently(tmp_path):
+    """One long job must not push every later due job past its slot."""
+    store_path = tmp_path / "cron" / "jobs.json"
+    started: dict[str, float] = {}
+
+    async def on_job(job):
+        started[job.id] = time.monotonic()
+        await asyncio.sleep(0.2)
+
+    service = CronService(store_path, on_job=on_job)
+    service._running = True
+    service._load_store()
+    service._schedule_tick = lambda: None
+
+    ids: list[str] = []
+    for name in ("job-a", "job-b"):
+        j = service.add_job(
+            name=name,
+            schedule=CronSchedule(kind="every", every_ms=60_000),
+            message="hello",
+            **_bound_chat(name),
+        )
+        ids.append(j.id)
+    # Mutate after both adds, straight on the live store: every read API can
+    # reload it from disk, replacing the objects earlier adds returned.
+    past = max(1, int(time.time() * 1000) - 1_000)
+    assert service._store is not None
+    for stored in service._store.jobs:
+        stored.state.next_run_at_ms = past
+    service._save_store()
+
+    await service._on_timer()
+
+    assert set(started) == set(ids)
+    assert abs(started[ids[0]] - started[ids[1]]) < 0.1
+
+
+@pytest.mark.asyncio
+async def test_in_flight_job_is_not_started_twice(tmp_path):
+    store_path = tmp_path / "cron" / "jobs.json"
+    calls: list[str] = []
+    service: CronService
+
+    async def on_job(job):
+        calls.append(job.id)
+        # A second tick arriving mid-run must not duplicate the fire.
+        await service._on_timer()
+
+    service = CronService(store_path, on_job=on_job)
+    service._running = True
+    service._load_store()
+    service._schedule_tick = lambda: None
+
+    job = service.add_job(
+        name="no-doubles",
+        schedule=CronSchedule(kind="every", every_ms=60_000),
+        message="hello",
+        **_bound_chat(),
+    )
+    job.state.next_run_at_ms = max(1, int(time.time() * 1000) - 1_000)
+    service._save_store()
+
+    await service._on_timer()
+
+    assert calls == [job.id]
