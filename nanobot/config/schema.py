@@ -343,6 +343,11 @@ class MCPServerConfig(Base):
     headers: dict[str, str] = Field(default_factory=dict)  # HTTP/SSE: custom headers
     tool_timeout: int = 30  # seconds before a tool call is cancelled
     enabled_tools: list[str] = Field(default_factory=lambda: ["*"])  # Only register these tools; accepts raw MCP names or wrapped mcp_<server>_<tool> names; ["*"] = all capabilities (tools, resources, prompts); any restriction = only listed tools, no resources/prompts
+    # Opt-in: the harness injects a reserved `_nanobot_identity` argument on every
+    # tool call, sourced from the request ContextVar and OVERWRITING any
+    # model-authored value. Servers that bind per-caller state (e.g. the Valley
+    # identity transport) opt in; every other server is untouched.
+    pass_identity: bool = False
 
 
 def _lazy_default(module_path: str, class_name: str) -> Any:

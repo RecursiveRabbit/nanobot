@@ -17,6 +17,7 @@ import httpx
 from loguru import logger
 
 from nanobot.agent.tools.base import Tool, ToolResult
+from nanobot.agent.tools.context import current_request_context
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.security.network import (
     PinnedDNSAsyncTransport,
@@ -603,6 +604,7 @@ class MCPToolWrapper(_MCPWrapperBase):
         server_name: str,
         tool_def: MCPToolDefinition,
         tool_timeout: int = 30,
+        pass_identity: bool = False,
     ):
         self._set_mcp_connection(session, server_name)
         self._original_name = tool_def.name
@@ -611,6 +613,7 @@ class MCPToolWrapper(_MCPWrapperBase):
         raw_schema = tool_def.inputSchema or {"type": "object", "properties": {}}
         self._parameters = _normalize_schema_for_openai(raw_schema)
         self._tool_timeout = tool_timeout
+        self._pass_identity = pass_identity
 
     @property
     def name(self) -> str:
@@ -625,6 +628,19 @@ class MCPToolWrapper(_MCPWrapperBase):
         return self._parameters
 
     async def execute(self, **kwargs: Any) -> str:
+        # Harness-injected caller identity (opt-in per server config).
+        # Reserved argument `_nanobot_identity` comes ONLY from the request
+        # ContextVar — any model-authored value is overwritten here. Servers
+        # like the Valley identity transport derive the caller's face from
+        # this; no context → inject nothing (the server refuses, per spec).
+        if self._pass_identity:
+            ctx = current_request_context()
+            if ctx is not None:
+                kwargs["_nanobot_identity"] = {
+                    "session_key": ctx.session_key,
+                    "channel": ctx.channel,
+                    "chat_id": ctx.chat_id,
+                }
         retried_transient = False
         refreshed_session = False
         while True:
@@ -1157,7 +1173,13 @@ async def connect_mcp_servers(
                         name,
                     )
                     continue
-                wrapper = MCPToolWrapper(session, name, tool_def, tool_timeout=cfg.tool_timeout)
+                wrapper = MCPToolWrapper(
+                    session,
+                    name,
+                    tool_def,
+                    tool_timeout=cfg.tool_timeout,
+                    pass_identity=cfg.pass_identity,
+                )
                 registry.register(wrapper)
                 logger.debug("MCP: registered tool '{}' from server '{}'", wrapper.name, name)
                 registered_count += 1
