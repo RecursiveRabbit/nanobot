@@ -45,10 +45,7 @@ from nanobot.session.recovery import (
     RUNTIME_CHECKPOINT_KEY,
     restore_runtime_checkpoint,
 )
-from nanobot.session.summary import (
-    SUMMARY_CONTINUATION_TEXT,
-    SessionSummaryCheckpoint,
-)
+from nanobot.session.summary import SessionSummaryCheckpoint
 from nanobot.session.webui_turns import (
     TITLE_GENERATION_MAX_TOKENS,
     TITLE_GENERATION_REASONING_EFFORT,
@@ -542,18 +539,16 @@ def test_save_turn_commits_summary_boundary_without_rewriting_raw_history() -> N
         input_persisted_early=True,
     )
 
+    # No checkpoint marker message is written; the boundary is metadata only.
     assert [message["role"] for message in session.messages] == [
-        "user", "user", "assistant", "tool", "assistant",
+        "user", "assistant", "tool", "assistant",
     ]
     assert session.messages[0]["content"] == "inspect the project"
-    assert session.messages[1]["content"] == SUMMARY_CONTINUATION_TEXT
-    assert session.messages[1]["_hidden_history"] is True
     assert session.last_archived == 1
     assert session.metadata["_last_summary"]["text"] == (
         "Current working-memory checkpoint."
     )
     assert [message["content"] for message in session.get_history()] == [
-        SUMMARY_CONTINUATION_TEXT,
         "",
         "full current result",
         "done",

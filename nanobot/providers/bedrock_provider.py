@@ -15,6 +15,7 @@ from nanobot.providers.base import (
     LLMProvider,
     LLMResponse,
     LLMUsage,
+    RoleAlternationError,
     ToolCallRequest,
     parse_tool_arguments,
     resolve_stream_idle_timeout_s,
@@ -255,40 +256,42 @@ class BedrockProvider(LLMProvider):
         return blocks or [{"text": ""}]
 
     @staticmethod
-    def _has_tool_use(msg: dict[str, Any]) -> bool:
-        content = msg.get("content")
-        return isinstance(content, list) and any(
-            isinstance(block, dict) and "toolUse" in block
-            for block in cast(list[object], content)
-        )
-
-    @staticmethod
     def _merge_consecutive(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        merged: list[dict[str, Any]] = []
-        for msg in messages:
-            if merged and merged[-1].get("role") == msg.get("role"):
-                prev = merged[-1].setdefault("content", [])
-                cur: Any = msg.get("content") or []
-                if not isinstance(prev, list):
-                    prev = [{"text": str(prev)}]
-                    merged[-1]["content"] = prev
-                else:
-                    prev = cast(list[Any], prev)
-                if isinstance(cur, list):
-                    prev.extend(cast(list[Any], cur))
-                else:
-                    prev.append({"text": str(cur)})
-            else:
-                merged.append(msg)
+        """Validate role alternation for Bedrock's converse API.
 
-        last_popped: dict[str, Any] | None = None
-        while merged and merged[-1].get("role") == "assistant":
-            last_popped = merged.pop()
-        if not merged and last_popped is not None and not BedrockProvider._has_tool_use(last_popped):
-            merged.append({"role": "user", "content": last_popped.get("content") or [{"text": "(empty)"}]})
-        if merged and merged[0].get("role") == "assistant" and not BedrockProvider._has_tool_use(merged[0]):
-            merged.insert(0, {"role": "user", "content": [{"text": "(conversation continued)"}]})
-        return merged
+        Evans 2026-10-10 (puppeting is a cardinal sin): this layer previously
+        *merged* consecutive same-role turns and silently rerouted trailing
+        assistants into synthetic user turns — text the assembled-context
+        view never showed. That machinery is excised. Bedrock requires
+        user/assistant alternation: the context governor must construct it
+        visibly. Raises ``RoleAlternationError`` instead of ever merging,
+        dropping, or synthesizing message content.
+        """
+        if not messages:
+            return messages
+        previous_role: str | None = None
+        for index, msg in enumerate(messages):
+            role = msg.get("role")
+            if role == previous_role and role in ("user", "assistant"):
+                raise RoleAlternationError(
+                    f"consecutive {role!r} turns at indexes "
+                    f"{index - 1} and {index}: Bedrock requires strict "
+                    "alternation — the context governor must construct it "
+                    "visibly, providers never merge content"
+                )
+            previous_role = role
+        if messages[-1].get("role") == "assistant":
+            raise RoleAlternationError(
+                "conversation ends with an 'assistant' turn: the context "
+                "governor must construct the closing turn visibly"
+            )
+        if messages[0].get("role") == "assistant":
+            raise RoleAlternationError(
+                "conversation starts with an 'assistant' turn: the first "
+                "turn must be 'user' — the context governor must construct "
+                "an opening turn visibly"
+            )
+        return messages
 
     def _convert_messages(
         self,
@@ -314,7 +317,19 @@ class BedrockProvider(LLMProvider):
                 converted.append({"role": "assistant", "content": self._assistant_blocks(msg)})
                 continue
             if role == "user":
-                converted.append({"role": "user", "content": self._content_blocks(content)})
+                blocks = self._content_blocks(content)
+                # Bedrock's converse API carries tool results inside a user
+                # turn; when the operator's user message follows a
+                # tool-result turn, its blocks join that turn visibly, here
+                # in the format converter — every block is preserved, none
+                # are merged at the validator layer.
+                if converted and converted[-1].get("role") == "user" and all(
+                    isinstance(block, dict) and "toolResult" in block
+                    for block in cast(list[object], converted[-1].get("content") or [])
+                ):
+                    converted[-1].setdefault("content", []).extend(blocks)
+                else:
+                    converted.append({"role": "user", "content": blocks})
 
         return system, self._merge_consecutive(converted)
 

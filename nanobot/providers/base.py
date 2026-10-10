@@ -617,7 +617,14 @@ class GenerationSettings:
     reasoning_effort: str | None = None
 
 
-_SYNTHETIC_USER_CONTENT = "(conversation continued)"
+class RoleAlternationError(ValueError):
+    """A provider request violates the provider's role-alternation contract.
+
+    Raised instead of silently merging, dropping, or synthesizing messages:
+    the context governor owns all context construction, visibly (Evans
+    2026-10-10).
+    """
+
 
 
 class LLMProvider(ABC):
@@ -1136,96 +1143,54 @@ class LLMProvider(ABC):
 
     @staticmethod
     def _enforce_role_alternation(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Merge consecutive same-role messages and drop trailing assistant messages.
+        """Validate role alternation for providers that require it.
 
-        Some providers (OpenAI-compat, Azure, vLLM, Ollama, etc.) reject requests
-        where the last message is 'assistant' (prefill not supported) or two
-        consecutive non-system messages share the same role.
+        Evans 2026-10-10 (puppeting is a cardinal sin): the provider layer
+        may never mutate message content — no merging, no dropping, no
+        synthetic inserts. Anything the assembled-context view did not
+        render byte-for-byte is refused here, loudly. OpenAI-compat
+        providers (Azure, vLLM, Ollama, GLM, ...) reject consecutive
+        same-role non-system messages and trailing-assistant prefill; those
+        invariants are the context governor's job to construct VISIBLY,
+        before the payload reaches a provider.
+
+        Raises:
+            RoleAlternationError: with the violating index and roles, naming
+                the governor seam that must construct the alternation.
         """
-        if not messages:
-            return messages
-
-        # Local import: providers must not import the session package at
-        # module load — session.manager imports this module, so a top-level
-        # import would cycle.
-        from nanobot.session.summary import is_summary_checkpoint_content
-
-        merged: list[dict[str, Any]] = []
-        for msg in messages:
+        previous_role: str | None = None
+        previous_index: int | None = None
+        for index, msg in enumerate(messages):
             role = msg.get("role")
-            if (
-                merged
-                and role != "system"
-                and role not in ("tool",)
-                and merged[-1].get("role") == role
-                and role in ("user", "assistant")
-            ):
-                prev = merged[-1]
-                if role == "user" and (
-                    is_summary_checkpoint_content(prev.get("content"))
-                    or is_summary_checkpoint_content(msg.get("content"))
-                ):
-                    # The summary-checkpoint marker is bookkeeping, not
-                    # conversation: its content already rides the system
-                    # prompt's archived-summary block. Fusing it into an
-                    # adjacent user turn would put harness text inside the
-                    # operator's message, so the marker is dropped instead.
-                    if is_summary_checkpoint_content(prev.get("content")):
-                        merged[-1] = dict(msg)
-                    continue
-                if role == "assistant":
-                    prev_has_tools = bool(prev.get("tool_calls"))
-                    curr_has_tools = bool(msg.get("tool_calls"))
-                    if curr_has_tools:
-                        merged[-1] = dict(msg)
-                        continue
-                    if prev_has_tools:
-                        continue
-                prev_content = prev.get("content") or ""
-                curr_content = msg.get("content") or ""
-                if isinstance(prev_content, str) and isinstance(curr_content, str):
-                    prev["content"] = (prev_content + "\n\n" + curr_content).strip()
-                elif role == "user":
-                    combined = dict(msg)
-                    combined["content"] = [
-                        *LLMProvider._content_as_blocks(prev_content),
-                        *LLMProvider._content_as_blocks(curr_content),
-                    ]
-                    merged[-1] = combined
-                else:
-                    merged[-1] = dict(msg)
-            else:
-                merged.append(dict(msg))
+            if not isinstance(role, str):
+                raise RoleAlternationError(
+                    f"message {index} has no string role: {role!r}"
+                )
+            if role == "system":
+                continue
+            if previous_role is not None and role == previous_role and role in ("user", "assistant"):
+                raise RoleAlternationError(
+                    f"consecutive {role!r} messages at indexes "
+                    f"{previous_index} and {index}: the context governor must "
+                    "construct role alternation visibly — providers never "
+                    "merge message content"
+                )
+            previous_role = role
+            previous_index = index
 
-        last_popped = None
-        while merged and merged[-1].get("role") == "assistant":
-            last_popped = merged.pop()
-
-        # If removing trailing assistant messages left only system messages,
-        # the request would be invalid for most providers (e.g. Zhipu/GLM
-        # error 1214).  Recover by converting the last popped assistant
-        # message to a user message so the LLM can still see the content.
-        if (
-            merged
-            and last_popped is not None
-            and not any(m.get("role") in ("user", "tool") for m in merged)
-        ):
-            recovered = dict(last_popped)
-            recovered["role"] = "user"
-            merged.append(recovered)
-
-        # Safety net: ensure the first non-system message is not a bare
-        # ``assistant`` message.  Providers like GLM reject system→assistant
-        # with error 1214.  This can happen when upstream truncation (e.g.
-        # _snip_history) drops the only user message.  Insert a synthetic
-        # user message to keep the sequence valid.
-        for i, msg in enumerate(merged):
-            if msg.get("role") != "system":
-                if msg.get("role") == "assistant" and not msg.get("tool_calls"):
-                    merged.insert(i, {"role": "user", "content": _SYNTHETIC_USER_CONTENT})
-                break
-
-        return merged
+        non_system = [m for m in messages if m.get("role") != "system"]
+        if non_system and non_system[-1].get("role") == "assistant":
+            raise RoleAlternationError(
+                "request ends with an 'assistant' message (prefill is not "
+                "supported): the context governor must construct the "
+                "closing turn visibly"
+            )
+        if non_system and non_system[0].get("role") == "assistant":
+            raise RoleAlternationError(
+                "first non-system message is 'assistant': the context "
+                "governor must construct an opening turn visibly"
+            )
+        return messages
 
     @staticmethod
     def _strip_image_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | None:

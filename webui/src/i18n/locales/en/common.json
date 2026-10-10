@@ -1465,6 +1465,8 @@
       "empty": "Nothing to compact.",
       "started": "Compressing context",
       "failed": "Context compaction failed",
+      "failedWithFile": "The agent has failed to compact — the raw error is stored at {{file}}",
+      "stripped": "Context exceeded — tool call results stripped",
       "succeeded": "Context compacted"
     },
     "loadingConversation": "Loading conversation…",

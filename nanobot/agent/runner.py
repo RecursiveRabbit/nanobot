@@ -18,7 +18,7 @@ from nanobot.agent.context_governance import (
     ContextCompactionState,
     ContextGovernanceConfig,
     ContextGovernor,
-    HistoryConsolidator,
+    ContextStripHandler,
     ModelRequestState,
     ProviderCompactionConsolidator,
     TranscriptBuilder,
@@ -103,8 +103,11 @@ class AgentRunSpec:
     session_key: str | None = None
     provider_retry_mode: str = "standard"
     checkpoint_callback: CheckpointCallback | None = None
-    consolidate_history: HistoryConsolidator | None = None
     consolidate_provider_compaction: ProviderCompactionConsolidator | None = None
+    # The context-exceeded strip (Evans 2026-10-10): session-bound turns
+    # answer request pressure with a durable tool-result strip, never a
+    # mid-turn summary. The mid-turn summarization path is retired.
+    context_strip: ContextStripHandler | None = None
     injection_callback: InjectionCallback | None = None
     terminal_injection_callback: InjectionCallback | None = None
     finalize_on_max_iterations: bool = True
@@ -353,13 +356,16 @@ class AgentRunner:
             return ContextCompactionState.from_transcript(
                 transcript_input,
                 transcript_builder,
-                spec.consolidate_history,
                 spec.consolidate_provider_compaction,
+                track=(
+                    spec.context_strip is not None
+                    or spec.consolidate_provider_compaction is not None
+                ),
             )
         if spec.initial_messages is None:
             raise ValueError("initial_messages is required without transcript_input")
-        if spec.consolidate_history is not None:
-            raise ValueError("consolidate_history requires transcript_input")
+        if spec.context_strip is not None:
+            raise ValueError("context_strip requires transcript_input")
         return list(spec.initial_messages), None
 
     async def _run_core(
@@ -403,6 +409,7 @@ class AgentRunner:
             max_tool_result_chars=spec.max_tool_result_chars,
             context_window_tokens=spec.runtime.context_window_tokens,
             max_tokens=spec.runtime.generation.max_tokens,
+            context_strip=spec.context_strip,
         )
         request_state = ModelRequestState(
             config=governance_config,

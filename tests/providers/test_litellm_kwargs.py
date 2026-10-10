@@ -1175,12 +1175,14 @@ def test_openai_compat_preserves_tool_call_ids_after_consecutive_assistant_messa
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
         provider = OpenAICompatProvider()
 
+    # The assistant's reply and its tool call arrive as ONE assistant
+    # message (consecutive assistant turns are refused loudly since the
+    # 2026-10-10 excision — the governor constructs alternation visibly).
     sanitized = provider._sanitize_messages([
         {"role": "user", "content": "不错"},
-        {"role": "assistant", "content": "对，破 4 万指日可待"},
         {
             "role": "assistant",
-            "content": "<think>我再查一下</think>",
+            "content": "对，破 4 万指日可待 <think>我再查一下</think>",
             "tool_calls": [
                 {
                     "id": "call_function_akxp3wqzn7ph_1",
@@ -1203,12 +1205,14 @@ def test_mistral_normalizes_tool_call_ids_after_consecutive_assistant_messages()
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
         provider = OpenAICompatProvider(spec=find_by_name("mistral"))
 
+    # The assistant's reply and its tool call arrive as ONE assistant
+    # message (consecutive assistant turns are refused loudly since the
+    # 2026-10-10 excision — the governor constructs alternation visibly).
     sanitized = provider._sanitize_messages([
         {"role": "user", "content": "不错"},
-        {"role": "assistant", "content": "对，破 4 万指日可待"},
         {
             "role": "assistant",
-            "content": "<think>我再查一下</think>",
+            "content": "对，破 4 万指日可待 <think>我再查一下</think>",
             "tool_calls": [
                 {
                     "id": "call_function_akxp3wqzn7ph_1",

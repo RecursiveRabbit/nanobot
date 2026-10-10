@@ -27,9 +27,9 @@ from nanobot.runtime_context import (
     RUNTIME_CONTEXT_HISTORY_META,
     public_history_message,
 )
-from nanobot.session.history_visibility import HIDDEN_HISTORY_META, is_hidden_history_message
+from nanobot.session.history_visibility import is_hidden_history_message
 from nanobot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
-from nanobot.session.summary import summary_continuation_text
+from nanobot.session.summary import is_retired_summary_checkpoint
 from nanobot.utils.strings import register_literal, text as string_text
 
 _CLI_APP_ATTACHMENT_DEFAULT = register_literal(
@@ -334,14 +334,13 @@ class Session:
         insert_at: int | None = None,
         last_active: datetime | None = None,
     ) -> None:
-        """Replace replay before a hidden boundary while preserving the transcript."""
+        """Record a replacement summary and advance the archive boundary.
+
+        No marker message is written: the checkpoint content rides the system
+        prompt's archived-summary block, and the harness never places
+        synthetic text into user turns (Evans 2026-10-10 excision).
+        """
         boundary = len(self.messages) if insert_at is None else insert_at
-        self.messages.insert(boundary, {
-            "role": "user",
-            "content": summary_continuation_text(),
-            HIDDEN_HISTORY_META: True,
-            "timestamp": datetime.now().isoformat(),
-        })
         self.metadata["_last_summary"] = {
             "text": summary,
             "last_active": (last_active or self.updated_at).isoformat(),
@@ -390,6 +389,11 @@ class Session:
 
         out: list[dict[str, Any]] = []
         for message in sliced:
+            if is_retired_summary_checkpoint(message):
+                # Suture: checkpoints persisted before the 2026-10-10
+                # excision carry a hidden marker line at the archive
+                # boundary. It must never replay as a user turn.
+                continue
             if message.get("_command"):
                 continue
             has_persisted_runtime_context = isinstance(

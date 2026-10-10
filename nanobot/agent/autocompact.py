@@ -12,7 +12,7 @@ from nanobot.events import NO_EVENTS, EventSink
 from nanobot.session.manager import Session, SessionManager
 from nanobot.session.summary import (
     SessionSummary,
-    is_summary_checkpoint,
+    is_retired_summary_checkpoint,
     session_summary_from_metadata,
 )
 
@@ -55,7 +55,7 @@ class AutoCompact:
     def _has_unarchived_messages(self, key: str) -> bool:
         session = self.sessions.get_or_create(key)
         return any(
-            not message.get("_command") and not is_summary_checkpoint(message)
+            not message.get("_command") and not is_retired_summary_checkpoint(message)
             for message in session.messages[session.last_archived:]
         )
 

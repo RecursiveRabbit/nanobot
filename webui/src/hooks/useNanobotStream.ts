@@ -830,6 +830,8 @@ export function useNanobotStream(
         const compaction = {
           id: ev.compaction_id,
           phase: ev.phase,
+          reason: ev.reason,
+          error_file: ev.error_file,
           announce: true,
         };
         setMessages((prev) => {

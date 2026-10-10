@@ -18,6 +18,7 @@ from nanobot.providers.base import (
     LLMProvider,
     LLMResponse,
     LLMUsage,
+    RoleAlternationError,
     ToolCallRequest,
     resolve_stream_idle_timeout_s,
     tool_arguments_object_for_replay,
@@ -407,105 +408,51 @@ class AnthropicProvider(LLMProvider):
         }
 
     @staticmethod
-    def _has_tool_use(msg: dict[str, Any]) -> bool:
-        """True if ``msg.content`` carries any ``tool_use`` block.
-
-        Anthropic forbids ``tool_use`` inside ``user`` turns, so messages that
-        issued a tool call cannot be safely rerouted when we patch the role.
-        """
-        content = msg.get("content")
-        if not isinstance(content, list):
-            return False
-        for block in cast(list[object], content):
-            if (
-                isinstance(block, dict)
-                and cast(dict[str, Any], block).get("type") == "tool_use"
-            ):
-                return True
-        return False
-
-    @staticmethod
     def _merge_consecutive(msgs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Normalize a message sequence for Anthropic's ``/messages`` endpoint.
+        """Validate a message sequence for Anthropic's ``/messages`` endpoint.
 
-        Anthropic's contract is stricter than OpenAI's:
+        Evans 2026-10-10 (puppeting is a cardinal sin): this layer previously
+        *collapsed* consecutive same-role turns, silently fusing text the
+        assembled-context view never showed. That machinery is excised.
+        Anthropic's contract:
 
-        1. Consecutive same-role turns must be collapsed into one.
-        2. The conversation cannot end with an ``assistant`` turn — Anthropic
-           does not support assistant-message prefill and returns 400.
-        3. The conversation cannot start with an ``assistant`` turn — the
-           first message must be ``user``.
+        1. Strict user/assistant alternation — the context governor must
+           construct it visibly, before the payload reaches a provider.
+        2. The conversation cannot end with an ``assistant`` turn (no
+           prefill) — governor's job, visibly.
+        3. The first message must be ``user`` — governor's job, visibly.
 
-        Rules 2 and 3 mirror ``LLMProvider._enforce_role_alternation`` in
-        ``base.py``, which applies the equivalent invariants to OpenAI-compat
-        providers.  The only Anthropic-specific wrinkle: ``tool_use`` blocks
-        live inside ``content`` (not a separate ``tool_calls`` field) and are
-        invalid inside ``user`` turns, so the recovery paths below must skip
-        any message carrying them rather than silently producing a malformed
-        request.
+        Raises:
+            RoleAlternationError: naming the violating turn and the governor
+                seam that must fix the sequence. Messages are never merged,
+                dropped, rerouted, or synthesized here.
         """
-        # Local import: providers must not import the session package at
-        # module load — session.manager imports providers.base, so a
-        # top-level import would cycle.
-        from nanobot.session.summary import is_summary_checkpoint_content
-
-        merged: list[dict[str, Any]] = []
-        for msg in msgs:
-            if merged and merged[-1]["role"] == msg["role"]:
-                if msg["role"] == "user" and (
-                    is_summary_checkpoint_content(merged[-1].get("content"))
-                    or is_summary_checkpoint_content(msg.get("content"))
-                ):
-                    # The summary-checkpoint marker is bookkeeping, not
-                    # conversation: its content already rides the system
-                    # prompt's archived-summary block. Fusing it into an
-                    # adjacent user turn would put harness text inside the
-                    # operator's message, so the marker is dropped instead.
-                    if is_summary_checkpoint_content(merged[-1].get("content")):
-                        merged[-1] = msg
-                    continue
-                prev_c = merged[-1]["content"]
-                cur_c = msg["content"]
-                if isinstance(prev_c, str):
-                    prev_c = [{"type": "text", "text": prev_c}]
-                if isinstance(cur_c, str):
-                    cur_c = [{"type": "text", "text": cur_c}]
-                if isinstance(cur_c, list):
-                    cast(list[Any], prev_c).extend(cast(list[Any], cur_c))
-                merged[-1]["content"] = prev_c
-            else:
-                merged.append(msg)
-
-        # Rule 2: strip trailing assistant turns — Anthropic rejects prefill.
-        last_popped: dict[str, Any] | None = None
-        while merged and merged[-1].get("role") == "assistant":
-            last_popped = merged.pop()
-
-        # Recovery for rule 2: if stripping removed every turn, reroute the
-        # last popped assistant as a user turn so upstream code still gets a
-        # valid request instead of a secondary "messages array empty" 400.
-        # Skip when the message carried ``tool_use`` blocks (see _has_tool_use).
-        if (
-            not merged
-            and last_popped is not None
-            and not AnthropicProvider._has_tool_use(last_popped)
-        ):
-            merged.append({"role": "user", "content": last_popped.get("content")})
-
-        # Rule 3: prepend a synthetic opener if the first surviving turn is an
-        # assistant (e.g. upstream history truncation dropped the original
-        # user request).  ``tool_use``-carrying assistants are left alone —
-        # that message will still fail validation, but injecting an opener
-        # before it would orphan the tool_use/tool_result pair that follows,
-        # turning a recoverable 400 into a harder-to-diagnose one.
-        if (
-            merged
-            and merged[0].get("role") == "assistant"
-            and not AnthropicProvider._has_tool_use(merged[0])
-        ):
-            merged.insert(0, {"role": "user", "content": "(conversation continued)"})
-
-        return merged
+        if not msgs:
+            return msgs
+        previous_role: str | None = None
+        for index, msg in enumerate(msgs):
+            role = msg.get("role")
+            if role == previous_role and role in ("user", "assistant"):
+                raise RoleAlternationError(
+                    f"consecutive {role!r} turns at indexes "
+                    f"{index - 1} and {index}: Anthropic requires strict "
+                    "alternation — the context governor must construct it "
+                    "visibly, providers never merge content"
+                )
+            previous_role = role
+        if msgs[-1].get("role") == "assistant":
+            raise RoleAlternationError(
+                "conversation ends with an 'assistant' turn: Anthropic does "
+                "not support prefill — the context governor must construct "
+                "the closing turn visibly"
+            )
+        if msgs[0].get("role") == "assistant":
+            raise RoleAlternationError(
+                "conversation starts with an 'assistant' turn: the first "
+                "turn must be 'user' — the context governor must construct "
+                "an opening turn visibly"
+            )
+        return msgs
 
     # ------------------------------------------------------------------
     # Tool definition conversion

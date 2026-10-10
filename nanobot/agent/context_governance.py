@@ -12,9 +12,8 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass, replace
-from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import uuid4
 
 from loguru import logger
@@ -38,8 +37,7 @@ from nanobot.runtime_context import (
 )
 from nanobot.session.history_visibility import is_hidden_history_message
 from nanobot.session.summary import (
-    is_summary_checkpoint_content,
-    summary_continuation_text,
+    is_retired_summary_checkpoint,
     SessionSummaryCheckpoint,
 )
 from nanobot.utils.helpers import (
@@ -56,10 +54,27 @@ if TYPE_CHECKING:
     from nanobot.providers.base import LLMProvider
 
 TranscriptBuilder = Callable[[TranscriptInput], list[dict[str, Any]]]
-HistoryConsolidator = Callable[
-    [list[dict[str, Any]], str | None],
-    Awaitable[str | None],
-]
+
+# The context-exceeded strip (Evans 2026-10-10): mid-turn pressure is answered
+# with shears, not a summary. Every tool result in the persisted session is
+# replaced with this frozen line; the session re-runs on the stripped file.
+CONTEXT_STRIP_PLACEHOLDER = "[context exceeded, tool call result stripped.]"
+# Session metadata key carrying the strip ledger: count, last_at,
+# consent_grants, consent_pending. One door — the file answers every audit.
+CONTEXT_STRIP_METADATA_KEY = "_context_strip"
+
+
+@dataclass(frozen=True, slots=True)
+class ContextStripOutcome:
+    """The result of one strip attempt against the persisted session."""
+
+    status: Literal["stripped", "consent_required"]
+    history: list[dict[str, Any]] | None = None
+    reason: str | None = None
+    error_file: str | None = None
+
+
+ContextStripHandler = Callable[[], Awaitable[ContextStripOutcome]]
 ProviderCompactionConsolidator = Callable[
     [ProviderConversationState, list[dict[str, Any]], str | None],
     Awaitable[str | None],
@@ -120,6 +135,9 @@ class ContextGovernanceConfig:
     max_tool_result_chars: int
     context_window_tokens: int | None = None
     max_tokens: int | None = None
+    # Wired for session-bound turns only; None for ephemeral requests, which
+    # keep the fit-to-budget path (there is no file to strip).
+    context_strip: ContextStripHandler | None = None
 
 
 @dataclass(slots=True)
@@ -132,7 +150,6 @@ class ContextCompactionState:
     active_summary: str | None
     transcript_input: TranscriptInput
     transcript_builder: TranscriptBuilder
-    consolidate_history: HistoryConsolidator
     consolidate_provider_compaction: ProviderCompactionConsolidator | None
     summary_checkpoint: SessionSummaryCheckpoint | None = None
 
@@ -141,12 +158,19 @@ class ContextCompactionState:
         cls,
         transcript_input: TranscriptInput,
         transcript_builder: TranscriptBuilder,
-        consolidate_history: HistoryConsolidator | None,
         consolidate_provider_compaction: ProviderCompactionConsolidator | None,
+        *,
+        track: bool,
     ) -> tuple[list[dict[str, Any]], ContextCompactionState | None]:
-        """Build the raw transcript and its initial H/delta boundary."""
+        """Build the raw transcript and its initial H/delta boundary.
+
+        ``track`` is on when a consumer needs the H/delta bookkeeping: the
+        context-exceeded strip (which rebuilds the transcript mid-turn) or a
+        provider-native compaction consolidator. Untracked transcripts take
+        the plain fit-to-budget path under pressure.
+        """
         messages = list(transcript_builder(transcript_input))
-        if consolidate_history is None:
+        if not track:
             return messages, None
         accepted_history_boundary = 1 + len(transcript_input.history)
         return messages, cls(
@@ -160,7 +184,6 @@ class ContextCompactionState:
             ),
             transcript_input=transcript_input,
             transcript_builder=transcript_builder,
-            consolidate_history=consolidate_history,
             consolidate_provider_compaction=consolidate_provider_compaction,
         )
 
@@ -239,8 +262,8 @@ class ContextGovernor:
                 prepared
                 and injection.get("role") == "user"
                 and prepared[-1].get("role") == "user"
-                and not is_summary_checkpoint_content(injection.get("content"))
-                and not is_summary_checkpoint_content(prepared[-1].get("content"))
+                and not is_retired_summary_checkpoint(injection)
+                and not is_retired_summary_checkpoint(prepared[-1])
                 and not is_hidden_history_message(injection)
                 and not is_hidden_history_message(prepared[-1])
                 and allows_conversation_message_merge(injection)
@@ -416,26 +439,6 @@ class ContextGovernor:
             return None
         return measured, source
 
-    @staticmethod
-    def _summary_transcript(
-        compaction: ContextCompactionState,
-        summary: str,
-    ) -> list[dict[str, Any]]:
-        """Rebuild only the stable system prefix around a replacement summary."""
-        return compaction.transcript_builder(
-            replace(
-                compaction.transcript_input,
-                history=[],
-                current_message=None,
-                media=None,
-                session_summary={
-                    "text": summary,
-                    "last_active": datetime.now().astimezone().isoformat(),
-                },
-                runtime_context_blocks=None,
-            )
-        )
-
     async def summarize_provider_compaction(
         self,
         state: ModelRequestState,
@@ -485,12 +488,21 @@ class ContextGovernor:
                 ContextCompactionEvent(
                     compaction_id=compaction_id,
                     phase="cancelled" if isinstance(exc, asyncio.CancelledError) else "failed",
+                    reason=(
+                        None
+                        if isinstance(exc, asyncio.CancelledError)
+                        else "provider-compaction-error"
+                    ),
                 ),
             )
             raise
         if not summary:
             await state.events.emit(
-                ContextCompactionEvent(compaction_id=compaction_id, phase="failed"),
+                ContextCompactionEvent(
+                    compaction_id=compaction_id,
+                    phase="failed",
+                    reason="provider-compaction-empty",
+                ),
             )
             return
         compaction.active_summary = summary
@@ -505,77 +517,121 @@ class ContextGovernor:
             ),
         )
 
-    async def _compact_request_history(
+    async def _strip_for_pressure(
         self,
         state: ModelRequestState,
-        compaction: ContextCompactionState,
-        messages: list[dict[str, Any]],
+        transcript: list[dict[str, Any]],
         pressure: tuple[int, str],
         *,
         tool_definitions: list[dict[str, Any]] | None,
     ) -> list[dict[str, Any]]:
-        """Replace accepted history H with a checkpoint while preserving delta."""
-        measured, _source = pressure
-        compaction_id = uuid4().hex
-        await state.events.emit(
-            ContextCompactionEvent(compaction_id=compaction_id, phase="started"),
-        )
-        try:
-            delta_messages = compaction.delta_after_accepted(messages)
-            consolidation_prefix = self.prepare_messages_for_model(
-                state.config,
-                compaction.accepted_messages,
-            )
-            summary = await compaction.consolidate_history(
-                deepcopy(consolidation_prefix),
-                compaction.active_summary,
-            )
-            if not summary:
+        """Answer request pressure with the strip, not a summary.
+
+        Evans 2026-10-10: mid-turn compaction is shears, not a fold. The
+        handler (wired by the loop, owning the session file) durably
+        replaces every persisted tool result with CONTEXT_STRIP_PLACEHOLDER
+        and answers with the stripped history; this method rebuilds the
+        in-turn transcript around it and the turn continues. No model call
+        is spent on the strip itself.
+
+        The single-run law lives in the handler: a session may be stripped
+        once without consent. If pressure survives a strip, the second call
+        comes back ``consent_required`` and the turn fails clearly — pause
+        and notify, never a retry storm.
+        """
+        compaction = state.compaction
+        strip = state.config.context_strip
+        assert compaction is not None and strip is not None
+        measured, source = pressure
+        for _attempt in range(2):
+            outcome = await strip()
+            if outcome.status != "stripped" or outcome.history is None:
+                await state.events.emit(
+                    ContextCompactionEvent(
+                        compaction_id=uuid4().hex,
+                        phase="failed",
+                        reason=outcome.reason,
+                        error_file=outcome.error_file,
+                    ),
+                )
                 raise ContextWindowExceededError(
                     session_key=state.config.session_key,
                     estimated_tokens=measured,
                     input_budget=self.input_budget(state.config),
-                    source=_source,
+                    source=f"context strip ({outcome.reason or 'unavailable'})",
                 )
-
-            compaction.active_summary = summary
-            prepared = self.prepare_messages_for_model(
-                state.config,
-                [
-                    *self._summary_transcript(compaction, summary),
-                    {"role": "user", "content": summary_continuation_text()},
-                    *delta_messages,
-                ],
+            new_input = replace(compaction.transcript_input, history=outcome.history)
+            new_raw = compaction.transcript_builder(new_input)
+            # Preserve this turn's in-flight additions past the accepted
+            # boundary, applying the same placeholder to any tool results
+            # they carry. The strip takes EVERY tool result, persisted or
+            # in-flight. When the boundary still points at the current
+            # message (pressure fired before the first request), the rebuilt
+            # transcript already carries it — drop the duplicate.
+            delta_additions = [
+                dict(message) for message in transcript[compaction.raw_accepted_boundary:]
+            ]
+            if (
+                delta_additions
+                and new_raw
+                and delta_additions[0] == new_raw[-1]
+            ):
+                delta_additions = delta_additions[1:]
+            for message in delta_additions:
+                if (
+                    message.get("role") == "tool"
+                    and message.get("content") != CONTEXT_STRIP_PLACEHOLDER
+                ):
+                    message["content"] = CONTEXT_STRIP_PLACEHOLDER
+            # The runner holds this list object; replace its contents in
+            # place so the rest of the turn runs on the stripped file.
+            transcript[:] = [*new_raw, *delta_additions]
+            boundary = 1 + len(outcome.history)
+            compaction = ContextCompactionState(
+                raw_messages=transcript,
+                accepted_messages=deepcopy(transcript[:boundary]),
+                raw_accepted_boundary=boundary,
+                active_summary=compaction.active_summary,
+                transcript_input=new_input,
+                transcript_builder=compaction.transcript_builder,
+                consolidate_provider_compaction=(
+                    compaction.consolidate_provider_compaction
+                ),
+                summary_checkpoint=compaction.summary_checkpoint,
             )
-            # Responses-style state is append-only. Replacing H with a
-            # checkpoint requires a fresh request; a successful response may
-            # establish a new provider-owned state at the rewritten boundary.
-            state.conversation.replace_transcript(compaction.raw_messages)
+            state.compaction = compaction
+            state.conversation.replace_transcript(transcript)
             state.usage = None
-            prepared = self.ensure_request_fits(
-                state.config,
-                prepared,
-                tool_definitions=tool_definitions,
-            )
-            compaction.summary_checkpoint = SessionSummaryCheckpoint(
-                summary=summary,
-                transcript_boundary=compaction.raw_accepted_boundary,
-            )
-        except (Exception, asyncio.CancelledError) as exc:
             await state.events.emit(
                 ContextCompactionEvent(
-                    compaction_id=compaction_id,
-                    phase="cancelled" if isinstance(exc, asyncio.CancelledError) else "failed",
+                    compaction_id=uuid4().hex,
+                    phase="stripped",
+                    reason=outcome.reason,
+                    error_file=outcome.error_file,
                 ),
             )
-            raise
-        await state.events.emit(
-            ContextCompactionEvent(
-                compaction_id=compaction_id,
-                phase="succeeded",
-            ),
+            prepared = self.prepare_messages_for_model(
+                state.config,
+                compaction.request_messages(transcript),
+            )
+            remaining = self.request_pressure(
+                state.config,
+                prepared,
+                None,
+                usage_matches_messages=False,
+                tool_definitions=tool_definitions,
+            )
+            if remaining is None:
+                return prepared
+            measured, source = remaining
+        # Unreachable while the handler keeps the single-run law; fail
+        # clearly rather than loop if it ever doesn't.
+        raise ContextWindowExceededError(
+            session_key=state.config.session_key,
+            estimated_tokens=measured,
+            input_budget=self.input_budget(state.config),
+            source=f"context strip did not relieve pressure ({source})",
         )
-        return prepared
 
     async def prepare_request(
         self,
@@ -607,7 +663,32 @@ class ContextGovernor:
         )
         request_was_fitted = False
         compaction = state.compaction
-        if compaction is None:
+        if (
+            compaction is not None
+            and state.config.context_strip is not None
+            and transcript is not None
+        ):
+            # Session-bound turn: pressure is answered with the strip
+            # (Evans 2026-10-10), never a mid-turn summary.
+            pressure = self.request_pressure(
+                state.config,
+                prepared,
+                state.usage,
+                usage_matches_messages=usage_matches_messages,
+                tool_definitions=tool_definitions,
+                request_context_tokens=request_context_tokens,
+            )
+            if pressure is not None:
+                prepared = await self._strip_for_pressure(
+                    state,
+                    transcript,
+                    pressure,
+                    tool_definitions=tool_definitions,
+                )
+                model_messages = prepared
+                supplemental_messages = None
+        else:
+            # No strip wired (ephemeral or SDK turns): the fit path serves.
             pressure = self.request_pressure(
                 state.config,
                 prepared,
@@ -629,32 +710,17 @@ class ContextGovernor:
                     )
                 except Exception:
                     await state.events.emit(
-                        ContextCompactionEvent(compaction_id=compaction_id, phase="failed"),
+                        ContextCompactionEvent(
+                            compaction_id=compaction_id,
+                            phase="failed",
+                            reason="fit-exceeded",
+                        ),
                     )
                     raise
                 await state.events.emit(
                     ContextCompactionEvent(compaction_id=compaction_id, phase="succeeded"),
                 )
                 request_was_fitted = True
-        else:
-            pressure = self.request_pressure(
-                state.config,
-                prepared,
-                state.usage,
-                usage_matches_messages=usage_matches_messages,
-                tool_definitions=tool_definitions,
-                request_context_tokens=request_context_tokens,
-            )
-            if pressure is not None:
-                prepared = await self._compact_request_history(
-                    state,
-                    compaction,
-                    messages,
-                    pressure,
-                    tool_definitions=tool_definitions,
-                )
-                model_messages = prepared
-                supplemental_messages = None
         provider_context = (
             state.conversation.prepare_request(
                 transcript,

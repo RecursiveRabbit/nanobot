@@ -1696,7 +1696,7 @@ async def test_drain_injections_on_llm_error():
             {"role": "system", "content": "system"},
             *transcript.history,
         ],
-        consolidate_history=AsyncMock(return_value=None),
+        context_strip=AsyncMock(),
         tools=tools,
         model="test-model",
         max_iterations=5,

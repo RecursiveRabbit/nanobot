@@ -26,8 +26,9 @@ from nanobot.llm_usage.context import llm_usage_source
 from nanobot.providers.base import ProviderCallContext, ProviderConversationState, ToolCallRequest
 from nanobot.runtime_context import public_history_messages
 from nanobot.session.manager import Session, SessionManager
-from nanobot.session.summary import is_summary_checkpoint, session_summary_from_metadata
+from nanobot.session.summary import is_retired_summary_checkpoint, session_summary_from_metadata
 from nanobot.utils.gitstore import GitStore
+from nanobot.utils.harness_errors import write_harness_error
 from nanobot.utils.helpers import (
     build_assistant_message,
     content_with_media_breadcrumbs,
@@ -545,10 +546,21 @@ class MemoryArchiver:
             )
             call_tools = []
         else:
-            request_messages = [
-                *[dict(message) for message in history],
-                prompt_message,
-            ]
+            request_messages = [dict(message) for message in history]
+            # Evans 2026-10-10: providers never fuse message content, so a
+            # user-role archive prompt appended after a user-ending history
+            # is combined HERE, visibly, instead of being merged invisibly
+            # at the provider layer.
+            if (
+                request_messages
+                and request_messages[-1].get("role") == "user"
+                and isinstance(request_messages[-1].get("content"), str)
+            ):
+                merged_last = dict(request_messages[-1])
+                merged_last["content"] = f"{merged_last['content']}\n\n{prompt}"
+                request_messages[-1] = merged_last
+            else:
+                request_messages.append(prompt_message)
         if input_token_budget is not None and provider_context is None:
             estimated, source = estimate_prompt_tokens_chain(
                 runtime.provider,
@@ -662,7 +674,7 @@ class MemoryArchiver:
         """Archive a captured session prefix without mutating the session."""
         messages = [
             message for message in session.messages[session.last_archived:archive_end]
-            if not message.get("_command") and not is_summary_checkpoint(message)
+            if not message.get("_command") and not is_retired_summary_checkpoint(message)
         ]
         if not messages:
             return None
@@ -778,6 +790,7 @@ class Consolidator:
         self.sessions = sessions
         self._build_messages = build_messages
         self._get_tool_definitions = get_tool_definitions
+        self._resolve_prompt_context = resolve_prompt_context
         self.archiver = MemoryArchiver(
             store=store,
             build_messages=build_messages,
@@ -793,6 +806,27 @@ class Consolidator:
     def get_lock(self, session_key: str) -> asyncio.Lock:
         """Return the shared consolidation lock for one session."""
         return self._locks.setdefault(session_key, asyncio.Lock())
+
+    def _compaction_error_file(
+        self,
+        session: Session,
+        *,
+        kind: str,
+        body: str,
+    ) -> str | None:
+        """Drop a raw compaction failure record through the errors/ door."""
+        workspace: Path | None = None
+        if self._resolve_prompt_context is not None:
+            try:
+                _, workspace = self._resolve_prompt_context(session)
+            except Exception:
+                workspace = None
+        return write_harness_error(
+            workspace,
+            kind=kind,
+            session_key=session.key,
+            body=body,
+        )
 
     async def summarize_transcript(
         self,
@@ -934,7 +968,7 @@ class Consolidator:
             archive_start = session.last_archived
             messages_to_archive = list(session.messages[archive_start:])
             has_new_messages = any(
-                not message.get("_command") and not is_summary_checkpoint(message)
+                not message.get("_command") and not is_retired_summary_checkpoint(message)
                 for message in messages_to_archive
             )
             if not has_new_messages:
@@ -962,13 +996,27 @@ class Consolidator:
                 backup_path.write_bytes(backup_bytes)
                 if backup_path.read_bytes() != backup_bytes:
                     raise OSError("backup verification failed")
-            except Exception:
+            except Exception as preflight_exc:
                 logger.exception(
                     "Compaction pre-flight could not guarantee restorability for {}; refusing",
                     session_key,
                 )
                 await events.emit(
-                    ContextCompactionEvent(compaction_id=compaction_id, phase="failed"),
+                    ContextCompactionEvent(
+                        compaction_id=compaction_id,
+                        phase="failed",
+                        reason="preflight-restore-unavailable",
+                        error_file=self._compaction_error_file(
+                            session,
+                            kind="compaction-preflight-refusal",
+                            body=(
+                                "Pre-flight could not guarantee restorability; "
+                                "the pass was refused (commit-or-nothing, "
+                                "Evans 2026-09-24).\n\n"
+                                f"{type(preflight_exc).__name__}: {preflight_exc}"
+                            ),
+                        ),
+                    ),
                 )
                 return None
 
@@ -1002,12 +1050,36 @@ class Consolidator:
                     ContextCompactionEvent(
                         compaction_id=compaction_id,
                         phase="cancelled" if isinstance(exc, asyncio.CancelledError) else "failed",
+                        reason=None if isinstance(exc, asyncio.CancelledError) else "archive-pass-error",
+                        error_file=(
+                            None
+                            if isinstance(exc, asyncio.CancelledError)
+                            else self._compaction_error_file(
+                                session,
+                                kind="compaction-archive-error",
+                                body=f"{type(exc).__name__}: {exc}",
+                            )
+                        ),
                     ),
                 )
                 raise
             if not summary:
                 await events.emit(
-                    ContextCompactionEvent(compaction_id=compaction_id, phase="failed"),
+                    ContextCompactionEvent(
+                        compaction_id=compaction_id,
+                        phase="failed",
+                        reason="archive-pass-empty",
+                        error_file=self._compaction_error_file(
+                            session,
+                            kind="compaction-archive-empty",
+                            body=(
+                                "The archive pass returned no summary; the "
+                                "pass failed by contract and nothing was "
+                                "changed. The session log carries the "
+                                "pass-level warning with the specific cause."
+                            ),
+                        ),
+                    ),
                 )
                 return None
 

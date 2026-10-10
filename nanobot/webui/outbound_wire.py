@@ -99,7 +99,9 @@ class TurnEndWirePayload(_ChatWirePayload):
 class ContextCompactionWirePayload(_ChatWirePayload):
     event: Literal["context_compaction"]
     compaction_id: str
-    phase: Literal["started", "succeeded", "failed", "cancelled"]
+    phase: Literal["started", "succeeded", "failed", "cancelled", "stripped"]
+    reason: NotRequired[str]
+    error_file: NotRequired[str]
 
 
 WebUIWirePayload: TypeAlias = (
@@ -142,6 +144,10 @@ def encode_context_compaction(
         "compaction_id": event.compaction_id,
         "phase": event.phase,
     }
+    if event.reason:
+        payload["reason"] = event.reason
+    if event.error_file:
+        payload["error_file"] = event.error_file
     return payload
 
 

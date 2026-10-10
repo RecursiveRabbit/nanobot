@@ -9,13 +9,22 @@ interface ContextCompactionNoticeProps {
 
 export function ContextCompactionNotice({ compaction }: ContextCompactionNoticeProps) {
   const { t } = useTranslation();
+  // Evans 2026-10-10: a designed refusal is not a malfunction, and a real
+  // failure names the errors/ file holding the raw record.
   const title = compaction.phase === "started"
     ? t("thread.compaction.started", { defaultValue: "Compressing context" })
-    : compaction.phase === "failed"
-      ? t("thread.compaction.failed", { defaultValue: "Context compaction failed" })
-      : compaction.phase === "cancelled"
-        ? t("thread.compaction.cancelled", { defaultValue: "Context compaction cancelled" })
-        : t("thread.compaction.succeeded", { defaultValue: "Context compacted" });
+    : compaction.phase === "stripped"
+      ? t("thread.compaction.stripped", { defaultValue: "Context exceeded — tool call results stripped" })
+      : compaction.phase === "failed"
+        ? compaction.error_file
+          ? t("thread.compaction.failedWithFile", {
+              defaultValue: "The agent has failed to compact — the raw error is stored at {{file}}",
+              file: compaction.error_file,
+            })
+          : t("thread.compaction.failed", { defaultValue: "Context compaction failed" })
+        : compaction.phase === "cancelled"
+          ? t("thread.compaction.cancelled", { defaultValue: "Context compaction cancelled" })
+          : t("thread.compaction.succeeded", { defaultValue: "Context compacted" });
 
   return (
     <div

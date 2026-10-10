@@ -16,7 +16,12 @@ class AgentEvent:
 @dataclass(frozen=True)
 class ContextCompactionEvent(AgentEvent):
     compaction_id: str
-    phase: Literal["started", "succeeded", "failed", "cancelled"]
+    phase: Literal["started", "succeeded", "failed", "cancelled", "stripped"]
+    # Why, when "why" matters (Evans 2026-10-10): a designed refusal and an
+    # unexpected error must not share one bare red word, and a failure must
+    # name the errors/ file holding the raw record.
+    reason: str | None = None
+    error_file: str | None = None
 
 
 @dataclass(frozen=True)

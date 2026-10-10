@@ -5,7 +5,6 @@ from nanobot.runtime_context import (
 )
 from nanobot.session.history_visibility import HIDDEN_HISTORY_META
 from nanobot.session.manager import Session, SessionManager
-from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT
 
 
 def _assert_no_orphans(history: list[dict]) -> None:
@@ -578,9 +577,10 @@ def test_fork_session_user_index_ignores_hidden_checkpoint_anchor(tmp_path):
     source.add_message("user", "round1")
     source.add_message("assistant", "answer1")
     source.add_message("user", "round2")
+    # Retired pre-excision checkpoint marker, still present on old sessions.
     source.add_message(
         "user",
-        SUMMARY_CONTINUATION_TEXT,
+        "Continue the active task from the working-memory checkpoint above.",
         **{HIDDEN_HISTORY_META: True},
     )
     source.add_message("assistant", "answer2")
@@ -599,7 +599,7 @@ def test_fork_session_user_index_ignores_hidden_checkpoint_anchor(tmp_path):
         "round1",
         "answer1",
         "round2",
-        SUMMARY_CONTINUATION_TEXT,
+        "Continue the active task from the working-memory checkpoint above.",
         "answer2",
     ]
     assert forked.last_archived == 3

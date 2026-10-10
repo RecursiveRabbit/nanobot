@@ -79,6 +79,12 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         "archive",
     ),
     BuiltinCommandSpec(
+        "/strip-again",
+        "Allow one more context strip",
+        "Consent to one more tool-result strip after the automatic one.",
+        "scissors",
+    ),
+    BuiltinCommandSpec(
         "/stop",
         "Stop current task",
         "Cancel the active agent turn for this chat.",
@@ -304,6 +310,36 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
         channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
         content="New session started.",
         metadata=dict(ctx.msg.metadata or {})
+    )
+
+
+async def cmd_strip_again(ctx: CommandContext) -> OutboundMessage:
+    """Grant consent for one more context strip (the single-run law).
+
+    Evans 2026-10-10: a session gets ONE automatic tool-result strip. A
+    second pressure trip means unintended behavior, so it pauses until the
+    user (this command) or an operator (nime, via the metadata flag) grants
+    exactly one more.
+    """
+    from nanobot.agent.context_governance import CONTEXT_STRIP_METADATA_KEY
+
+    loop = ctx.loop
+    session = ctx.session or loop.sessions.get_or_create(ctx.key)
+    meta = dict(session.metadata.get(CONTEXT_STRIP_METADATA_KEY) or {})
+    grants = meta.get("consent_grants")
+    grants = (grants if isinstance(grants, int) else 0) + 1
+    meta["consent_grants"] = grants
+    meta["consent_pending"] = False
+    session.metadata[CONTEXT_STRIP_METADATA_KEY] = meta
+    loop.sessions.save(session)
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=(
+            f"Consent recorded (grant #{grants}) — the next over-budget turn "
+            "may strip tool call results once more. Resend your message."
+        ),
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
     )
 
 
@@ -684,6 +720,7 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.priority("/status", cmd_status)
     router.exact("/new", cmd_new)
     router.exact("/compact", cmd_compact)
+    router.exact("/strip-again", cmd_strip_again)
     router.exact("/status", cmd_status)
     router.exact("/model", cmd_model)
     router.prefix("/model ", cmd_model)

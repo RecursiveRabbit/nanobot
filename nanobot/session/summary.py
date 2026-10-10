@@ -8,51 +8,31 @@ from datetime import datetime
 from typing import Any, TypedDict, cast
 
 from nanobot.session.history_visibility import is_hidden_history_message
-from nanobot.utils.strings import register_literal, text as string_text
 
-SUMMARY_CONTINUATION_TEXT = register_literal(
-    "literal:summary_continuation",
-    "Working-memory checkpoint above.",
-    group="Compaction",
-)
-
-# The original default carried an imperative ("Continue the active task...").
-# Provider-side role normalization could fuse that marker into the operator's
-# own user message, making the harness assign a task inside a user turn.
-# Retired 2026-10-10: marker lines stay declarative; the compaction prompt is
-# the only task the harness may assign. Persisted checkpoints written under
-# the old text must still match, so the legacy string stays recognized.
-_LEGACY_SUMMARY_CONTINUATION_TEXTS = frozenset({
+# Marker lines that compaction once inserted as hidden user-turn messages at
+# the archive boundary. Pulled by the root on Evans' 2026-10-10 ruling: the
+# harness never places synthetic text into user turns (puppeting is a
+# cardinal sin), and the checkpoint content already rides the system
+# prompt's archived-summary block. Nothing creates these lines anymore; the
+# set exists ONLY as a suture so checkpoints persisted before the excision
+# keep their marker out of replay and summarization.
+_RETIRED_CHECKPOINT_MARKER_TEXTS = frozenset({
     "Continue the active task from the working-memory checkpoint above.",
+    "Working-memory checkpoint above.",
 })
 
 
-def summary_continuation_text() -> str:
-    """The current continuation marker (operator-configurable)."""
-    return string_text("literal:summary_continuation", SUMMARY_CONTINUATION_TEXT)
+def is_retired_summary_checkpoint(message: Mapping[str, Any] | None) -> bool:
+    """Identify a retired checkpoint marker in persisted history.
 
-
-def is_summary_checkpoint_content(content: Any) -> bool:
-    """True for marker text from any era: bundled, legacy, or operator override."""
-    if not isinstance(content, str):
-        return False
-    return (
-        content == SUMMARY_CONTINUATION_TEXT
-        or content in _LEGACY_SUMMARY_CONTINUATION_TEXTS
-        or content == summary_continuation_text()
-    )
-
-
-def is_summary_checkpoint(message: Mapping[str, Any]) -> bool:
-    """Identify the durable boundary of a replacement summary.
-
-    Matches the bundled marker, retired markers from earlier defaults, and
-    any operator override, so changing the string never orphans checkpoints
-    written under a previous text.
+    Suture only: new checkpoints write no marker message at all. Old sessions
+    still carry one of these hidden lines; matching them here keeps the
+    retired text out of model replay (it would otherwise surface as a user
+    turn) and out of what the consolidator feeds the summarizer.
     """
     if not is_hidden_history_message(message):
         return False
-    return is_summary_checkpoint_content(message.get("content"))
+    return message.get("content") in _RETIRED_CHECKPOINT_MARKER_TEXTS
 
 
 class SessionSummary(TypedDict):

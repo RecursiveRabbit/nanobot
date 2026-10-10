@@ -701,8 +701,16 @@ class OpenAICompatProvider(LLMProvider):
         self,
         messages: list[dict[str, Any]],
         model: str | None = None,
+        *,
+        enforce_alternation: bool = True,
     ) -> list[dict[str, Any]]:
-        """Strip non-standard keys, normalize tool_call IDs."""
+        """Strip non-standard keys, normalize tool_call IDs.
+
+        Chat-alternation enforcement applies to chat-completions requests
+        only. Responses-API bodies carry input items where consecutive
+        same-role turns and a leading assistant item are legal wire shapes;
+        callers building Responses bodies pass ``enforce_alternation=False``.
+        """
         sanitized = LLMProvider._sanitize_request_messages(messages, _ALLOWED_MSG_KEYS)
         id_map: dict[str, str] = {}
         pending_tool_ids: dict[str, deque[str]] = {}
@@ -796,6 +804,8 @@ class OpenAICompatProvider(LLMProvider):
                 and not (clean.get("role") == "assistant" and clean.get("tool_calls"))
             ):
                 clean["content"] = self._coerce_content_to_string(clean.get("content"))
+        if not enforce_alternation:
+            return sanitized
         return self._enforce_role_alternation(sanitized)
 
     @staticmethod
@@ -1272,9 +1282,12 @@ class OpenAICompatProvider(LLMProvider):
         """Build a Responses API body for direct OpenAI requests."""
         model_name = model or self.default_model
         model_name = self._request_model_name(model_name)
+        # Responses input items are not bound by chat role alternation; the
+        # conversion below owns the wire shape.
         sanitized_messages = self._sanitize_messages(
             self._sanitize_empty_content(messages),
             model_name,
+            enforce_alternation=False,
         )
         sanitized_state = (
             provider_context.conversation_state
@@ -1286,6 +1299,7 @@ class OpenAICompatProvider(LLMProvider):
                 self._sanitize_messages(
                     self._sanitize_empty_content(sanitized_state.pending_messages),
                     model_name,
+                    enforce_alternation=False,
                 )
             )
         is_deepseek = bool(self._spec and self._spec.name == "deepseek")

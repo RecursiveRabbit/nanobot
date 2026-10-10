@@ -9,7 +9,6 @@ from nanobot.providers.base import (
     LLMResponse,
     ProviderConversationState,
 )
-from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT
 
 
 def _make_loop(
@@ -38,56 +37,10 @@ def _make_loop(
     return loop
 
 
-@pytest.mark.asyncio
-async def test_runner_pressure_commits_summary_and_current_delta(tmp_path) -> None:
-    loop = _make_loop(
-        tmp_path, estimated_tokens=100, context_window_tokens=1_624, max_tokens=100,
-    )
-    loop.provider.can_resume_conversation_state.return_value = False
-    loop.schedule_background = lambda coro: coro.close()  # type: ignore[method-assign]
-
-    session = loop.sessions.get_or_create("cli:test")
-    session.messages = [
-        {"role": role, "content": f"old-{role}-{turn}"}
-        for turn in range(6)
-        for role in ("user", "assistant")
-    ]
-    loop.sessions.save(session)
-
-    def estimate(messages, _tools, _model):
-        contents = [str(message.get("content")) for message in messages]
-        if contents and "SNIP" in contents[-1]:
-            return 300, "test-counter"
-        if any(content.startswith("old-") for content in contents):
-            return 600, "test-counter"
-        return 100, "test-counter"
-
-    loop.provider.estimate_prompt_tokens.side_effect = estimate
-    loop.provider.chat_stream_with_retry = AsyncMock(side_effect=[
-        LLMResponse(content="Current checkpoint.", tool_calls=[]),
-        LLMResponse(content="done", tool_calls=[]),
-    ])
-
-    result = await loop.process_direct("continue the task", session_key="cli:test")
-
-    assert result.content == "done"
-    assert loop.provider.chat_stream_with_retry.await_count == 2
-    model_request = loop.provider.chat_stream_with_retry.await_args_list[1].kwargs["messages"]
-    assert "Current checkpoint." in model_request[0]["content"]
-    assert model_request[1]["content"] == SUMMARY_CONTINUATION_TEXT
-    assert model_request[2]["content"] == "continue the task"
-
-    reloaded = loop.sessions.get_or_create("cli:test")
-    assert reloaded.messages[0]["content"] == "old-user-0"
-    assert reloaded.metadata["_last_summary"]["text"] == "Current checkpoint."
-    assert reloaded.messages[reloaded.last_archived]["content"] == (
-        SUMMARY_CONTINUATION_TEXT
-    )
-    assert [message["content"] for message in reloaded.get_history()] == [
-        SUMMARY_CONTINUATION_TEXT,
-        "continue the task",
-        "done",
-    ]
+# Mid-turn local compaction was pulled by the root (Evans 2026-10-10:
+# "mid turn compaction is a completely different system... No summary. No
+# agent turn"): test_runner_pressure_commits_summary_and_current_delta died
+# with the path it exercised.
 
 
 @pytest.mark.asyncio
@@ -137,10 +90,7 @@ async def test_native_provider_compaction_commits_portable_terminal_checkpoint(
     assert reloaded.metadata["_last_summary"]["text"] == (
         "portable terminal checkpoint"
     )
-    assert reloaded.messages[reloaded.last_archived]["content"] == (
-        SUMMARY_CONTINUATION_TEXT
-    )
+    # No checkpoint marker message is written; the boundary is metadata only.
     assert [message["content"] for message in reloaded.get_history()] == [
-        SUMMARY_CONTINUATION_TEXT,
         "done",
     ]

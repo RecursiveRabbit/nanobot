@@ -99,12 +99,17 @@ from nanobot.session.recovery import (
 from nanobot.session.summary import (
     SessionSummary,
     SessionSummaryCheckpoint,
-    is_summary_checkpoint_content,
     session_summary_from_metadata,
 )
 from nanobot.triggers.local_turns import LocalTriggerTurnCoordinator
+from nanobot.agent.context_governance import (
+    CONTEXT_STRIP_METADATA_KEY,
+    CONTEXT_STRIP_PLACEHOLDER,
+    ContextStripOutcome,
+)
 from nanobot.utils.cancellation import task_is_cancelling
 from nanobot.utils.document import reference_non_image_attachments
+from nanobot.utils.harness_errors import write_harness_error
 from nanobot.utils.helpers import image_placeholder_text
 from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.utils.progress_events import output_events
@@ -770,6 +775,114 @@ class AgentLoop:
             runtime_context_blocks=ctx.runtime_context_blocks,
         )
 
+    async def _context_strip_for_turn(
+        self,
+        session: Session,
+        *,
+        workspace: Path | None,
+    ) -> ContextStripOutcome:
+        """The context-exceeded strip, session side (Evans 2026-10-10).
+
+        Mid-turn pressure is answered with shears, not a summary: every
+        tool result in the persisted session is replaced with
+        CONTEXT_STRIP_PLACEHOLDER, provider state is cleared, and the turn
+        re-runs on the stripped file. The mutation is durable — the file is
+        the truth and the model reads its own scar tissue.
+
+        The single-run law: one strip per session without consent. A second
+        trip means the agent is doing something we didn't intend — the
+        handler refuses, flags consent_pending in the session metadata,
+        drops the raw record in the errors/ door, and the turn fails
+        clearly. `/strip-again` (user) or an operator grant (nime) releases
+        exactly one more strip.
+        """
+        async with self.consolidator.get_lock(session.key):
+            meta = dict(session.metadata.get(CONTEXT_STRIP_METADATA_KEY) or {})
+            count = meta.get("count") if isinstance(meta.get("count"), int) else 0
+            grants = (
+                meta.get("consent_grants")
+                if isinstance(meta.get("consent_grants"), int)
+                else 0
+            )
+            if count >= 1 + grants:
+                meta["consent_pending"] = True
+                session.metadata[CONTEXT_STRIP_METADATA_KEY] = meta
+                self.sessions.save(session)
+                error_file = write_harness_error(
+                    workspace,
+                    kind="context-strip-consent-required",
+                    session_key=session.key,
+                    body=(
+                        "Context pressure tripped again after "
+                        f"{count} strip(s) with {grants} consent grant(s).\n"
+                        "The single-run law (Evans 2026-10-10) allows one "
+                        "automatic strip per session; a second requires user "
+                        "consent (/strip-again) or an operator grant.\n"
+                        "The session is paused at this turn; rescue is a "
+                        "reviewed event."
+                    ),
+                )
+                logger.warning(
+                    "Context strip for {} refused: consent required "
+                    "(count={}, grants={}, record={})",
+                    session.key, count, grants, error_file,
+                )
+                return ContextStripOutcome(
+                    status="consent_required",
+                    reason="strip-consent-required",
+                    error_file=error_file,
+                )
+            stripped = 0
+            for message in session.messages:
+                if (
+                    message.get("role") == "tool"
+                    and message.get("content") != CONTEXT_STRIP_PLACEHOLDER
+                ):
+                    message["content"] = CONTEXT_STRIP_PLACEHOLDER
+                    stripped += 1
+            if stripped == 0:
+                # Pressure with nothing left to strip lives outside tool
+                # results — shears cannot help. Pause and notify.
+                error_file = write_harness_error(
+                    workspace,
+                    kind="context-strip-exhausted",
+                    session_key=session.key,
+                    body=(
+                        "Context pressure with no unstripped tool results; "
+                        "the overflow lives in prose, not tool output.\n"
+                        "The session is paused at this turn; rescue is a "
+                        "reviewed event."
+                    ),
+                )
+                logger.warning(
+                    "Context strip for {} found nothing to strip (record={})",
+                    session.key, error_file,
+                )
+                return ContextStripOutcome(
+                    status="consent_required",
+                    reason="strip-exhausted",
+                    error_file=error_file,
+                )
+            meta.update(
+                count=count + 1,
+                last_at=datetime.now().isoformat(),
+                consent_pending=False,
+            )
+            session.metadata[CONTEXT_STRIP_METADATA_KEY] = meta
+            # Responses-style state is append-only; a rewritten history
+            # requires a fresh provider request.
+            session.provider_state = None
+            self.sessions.save(session)
+            logger.info(
+                "Context strip for {}: {} tool result(s) stripped",
+                session.key, stripped,
+            )
+            return ContextStripOutcome(
+                status="stripped",
+                history=session.get_history(),
+                reason=f"{stripped} tool result(s) stripped",
+            )
+
     async def _execute_compaction_tools(
         self,
         session: Session,
@@ -1258,12 +1371,14 @@ class AgentLoop:
                 session_key=session.key if session else None,
                 provider_retry_mode=self.provider_retry_mode,
                 checkpoint_callback=_checkpoint,
-                consolidate_history=(
+                # The context-exceeded strip (Evans 2026-10-10): session-bound
+                # turns answer pressure with a durable tool-result strip. The
+                # mid-turn summarization wiring is retired.
+                context_strip=(
                     partial(
-                        self.consolidator.summarize_transcript,
-                        runtime=runtime,
-                        session_key=session.key,
-                        tools=effective_tools.get_definitions(),
+                        self._context_strip_for_turn,
+                        session,
+                        workspace=effective_scope.project_path,
                     )
                     if session is not None and not ephemeral
                     else None
@@ -2410,17 +2525,6 @@ class AgentLoop:
             governance_config,
             transcript,
         )
-        # Display metadata, aligned by index and kept OUT of the message array
-        # so the payload stays byte-identical to the outbound request.
-        message_flags = [
-            {
-                "checkpoint": (
-                    message.get("role") == "user"
-                    and is_summary_checkpoint_content(message.get("content"))
-                ),
-            }
-            for message in prepared
-        ]
         provider_state = session.provider_state
         resumable = bool(
             provider_state is not None
@@ -2433,7 +2537,6 @@ class AgentLoop:
             "provider": getattr(runtime.provider, "name", None),
             "provider_state_resumable": resumable,
             "messages": prepared,
-            "message_flags": message_flags,
             "tools": tools,
         }
 

@@ -8,7 +8,9 @@ parse → serialize round-trip so the model can continue reasoning.
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from nanobot.providers.base import ToolCallRequest
+import pytest
+
+from nanobot.providers.base import RoleAlternationError, ToolCallRequest
 from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 from nanobot.providers.registry import ProviderSpec
 
@@ -436,9 +438,12 @@ def test_gemini_drops_malformed_tool_call_entries_without_crashing() -> None:
         {"role": "user", "content": "continue"},
     ]
 
-    sanitized = provider._sanitize_messages(messages)
-
-    assert not any(message.get("tool_calls") for message in sanitized)
+    # The malformed assistant carries no valid content, so sanitizing drops
+    # it; what remains is two adjacent user turns. Evans 2026-10-10: the
+    # provider refuses that loudly instead of silently fusing the operator's
+    # messages — the context governor owns visible alternation.
+    with pytest.raises(RoleAlternationError, match="consecutive 'user'"):
+        provider._sanitize_messages(messages)
 
 
 def test_gemini_matches_duplicate_tool_ids_by_call_instance() -> None:

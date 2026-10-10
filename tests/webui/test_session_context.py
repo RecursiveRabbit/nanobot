@@ -115,12 +115,13 @@ def test_session_context_full_mode_returns_complete_model_view() -> None:
     assert payload["archived_summary"] == long_summary.strip()
     assert payload["archived_summary_at"] == "2026-09-20T05:00:00"
     assert payload["replay"] == [
-        {"role": "user", "content": "recent question", "checkpoint": False},
-        {"role": "assistant", "content": "recent \nanswer", "checkpoint": False},
+        {"role": "user", "content": "recent question"},
+        {"role": "assistant", "content": "recent \nanswer"},
     ]
 
 
-def test_session_context_full_mode_marks_checkpoint_boundary() -> None:
+def test_session_context_full_mode_has_no_checkpoint_marker() -> None:
+    """The marker message was excised: the boundary is metadata, not replay."""
     session = Session(
         key="websocket:context",
         messages=[{"role": "user", "content": "old question"}],
@@ -129,5 +130,5 @@ def test_session_context_full_mode_marks_checkpoint_boundary() -> None:
 
     payload = session_context_payload(session, full=True)
 
-    assert payload["replay"][0]["checkpoint"] is True
+    assert payload["replay"] == []
     assert payload["archived_summary"] == "settled notes"
