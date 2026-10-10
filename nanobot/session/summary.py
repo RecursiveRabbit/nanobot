@@ -12,24 +12,47 @@ from nanobot.utils.strings import register_literal, text as string_text
 
 SUMMARY_CONTINUATION_TEXT = register_literal(
     "literal:summary_continuation",
-    "Continue the active task from the working-memory checkpoint above.",
+    "Working-memory checkpoint above.",
     group="Compaction",
 )
+
+# The original default carried an imperative ("Continue the active task...").
+# Provider-side role normalization could fuse that marker into the operator's
+# own user message, making the harness assign a task inside a user turn.
+# Retired 2026-10-10: marker lines stay declarative; the compaction prompt is
+# the only task the harness may assign. Persisted checkpoints written under
+# the old text must still match, so the legacy string stays recognized.
+_LEGACY_SUMMARY_CONTINUATION_TEXTS = frozenset({
+    "Continue the active task from the working-memory checkpoint above.",
+})
+
 
 def summary_continuation_text() -> str:
     """The current continuation marker (operator-configurable)."""
     return string_text("literal:summary_continuation", SUMMARY_CONTINUATION_TEXT)
 
+
+def is_summary_checkpoint_content(content: Any) -> bool:
+    """True for marker text from any era: bundled, legacy, or operator override."""
+    if not isinstance(content, str):
+        return False
+    return (
+        content == SUMMARY_CONTINUATION_TEXT
+        or content in _LEGACY_SUMMARY_CONTINUATION_TEXTS
+        or content == summary_continuation_text()
+    )
+
+
 def is_summary_checkpoint(message: Mapping[str, Any]) -> bool:
     """Identify the durable boundary of a replacement summary.
 
-    Matches both the bundled marker and any operator override, so overriding
-    the string never orphans checkpoints written under the previous text.
+    Matches the bundled marker, retired markers from earlier defaults, and
+    any operator override, so changing the string never orphans checkpoints
+    written under a previous text.
     """
     if not is_hidden_history_message(message):
         return False
-    content = message.get("content")
-    return content == SUMMARY_CONTINUATION_TEXT or content == summary_continuation_text()
+    return is_summary_checkpoint_content(message.get("content"))
 
 
 class SessionSummary(TypedDict):

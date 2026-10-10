@@ -1,6 +1,7 @@
 """Tests for AnthropicProvider._merge_consecutive."""
 
 from nanobot.providers.anthropic_provider import AnthropicProvider
+from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT
 
 
 class TestMergeConsecutive:
@@ -137,3 +138,22 @@ class TestMergeConsecutive:
         ]
         result = AnthropicProvider._merge_consecutive(msgs)
         assert [m["role"] for m in result] == ["assistant", "user"]
+
+    def test_summary_checkpoint_marker_never_fused_into_user_message(self):
+        """The checkpoint marker is dropped, not merged into the operator's message.
+
+        Same regression as the OpenAI-compat path: the retired imperative
+        marker must never ride inside a user turn, and the current
+        declarative marker is bookkeeping and is dropped the same way.
+        """
+        legacy = "Continue the active task from the working-memory checkpoint above."
+        for marker in (legacy, SUMMARY_CONTINUATION_TEXT):
+            msgs = [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": marker},
+                {"role": "user", "content": "Morning Studi, coffee?"},
+            ]
+            result = AnthropicProvider._merge_consecutive([dict(m) for m in msgs])
+            user_messages = [m for m in result if m["role"] == "user"]
+            assert len(user_messages) == 1
+            assert user_messages[0]["content"] == "Morning Studi, coffee?"

@@ -1,6 +1,7 @@
 """Tests for LLMProvider._enforce_role_alternation."""
 
 from nanobot.providers.base import _SYNTHETIC_USER_CONTENT, LLMProvider
+from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT
 
 
 class TestEnforceRoleAlternation:
@@ -272,3 +273,33 @@ class TestEnforceRoleAlternation:
         result = LLMProvider._enforce_role_alternation(msgs)
         assert result[1]["role"] == "user"
         assert result[1]["content"] == "hello"
+
+    def test_summary_checkpoint_marker_never_fused_into_user_message(self):
+        """The checkpoint marker is dropped, not merged into the operator's message.
+
+        Regression: the old imperative marker ("Continue the active task...")
+        was fused into the adjacent user message here, putting harness-assigned
+        task text inside the user's own words. Both the retired and current
+        marker texts must never ride a user turn.
+        """
+        legacy = "Continue the active task from the working-memory checkpoint above."
+        for marker in (legacy, SUMMARY_CONTINUATION_TEXT):
+            msgs = [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": marker},
+                {"role": "user", "content": "Morning Studi, coffee?"},
+            ]
+            result = LLMProvider._enforce_role_alternation([dict(m) for m in msgs])
+            user_messages = [m for m in result if m["role"] == "user"]
+            assert len(user_messages) == 1
+            assert user_messages[0]["content"] == "Morning Studi, coffee?"
+
+    def test_user_message_before_checkpoint_marker_keeps_user_content(self):
+        """Marker after the user message is dropped; user content survives intact."""
+        msgs = [
+            {"role": "user", "content": "first"},
+            {"role": "user", "content": SUMMARY_CONTINUATION_TEXT},
+            {"role": "user", "content": "second"},
+        ]
+        result = LLMProvider._enforce_role_alternation([dict(m) for m in msgs])
+        assert [m["content"] for m in result] == ["first\n\nsecond"]

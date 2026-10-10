@@ -444,9 +444,26 @@ class AnthropicProvider(LLMProvider):
         any message carrying them rather than silently producing a malformed
         request.
         """
+        # Local import: providers must not import the session package at
+        # module load — session.manager imports providers.base, so a
+        # top-level import would cycle.
+        from nanobot.session.summary import is_summary_checkpoint_content
+
         merged: list[dict[str, Any]] = []
         for msg in msgs:
             if merged and merged[-1]["role"] == msg["role"]:
+                if msg["role"] == "user" and (
+                    is_summary_checkpoint_content(merged[-1].get("content"))
+                    or is_summary_checkpoint_content(msg.get("content"))
+                ):
+                    # The summary-checkpoint marker is bookkeeping, not
+                    # conversation: its content already rides the system
+                    # prompt's archived-summary block. Fusing it into an
+                    # adjacent user turn would put harness text inside the
+                    # operator's message, so the marker is dropped instead.
+                    if is_summary_checkpoint_content(merged[-1].get("content")):
+                        merged[-1] = msg
+                    continue
                 prev_c = merged[-1]["content"]
                 cur_c = msg["content"]
                 if isinstance(prev_c, str):

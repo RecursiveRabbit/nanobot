@@ -99,8 +99,8 @@ from nanobot.session.recovery import (
 from nanobot.session.summary import (
     SessionSummary,
     SessionSummaryCheckpoint,
+    is_summary_checkpoint_content,
     session_summary_from_metadata,
-    summary_continuation_text,
 )
 from nanobot.triggers.local_turns import LocalTriggerTurnCoordinator
 from nanobot.utils.cancellation import task_is_cancelling
@@ -2412,12 +2412,11 @@ class AgentLoop:
         )
         # Display metadata, aligned by index and kept OUT of the message array
         # so the payload stays byte-identical to the outbound request.
-        continuation = summary_continuation_text()
         message_flags = [
             {
                 "checkpoint": (
                     message.get("role") == "user"
-                    and message.get("content") == continuation
+                    and is_summary_checkpoint_content(message.get("content"))
                 ),
             }
             for message in prepared

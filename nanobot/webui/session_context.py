@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from nanobot.providers.base import LLMUsage
 from nanobot.session.manager import Session
-from nanobot.session.summary import summary_continuation_text
+from nanobot.session.summary import is_summary_checkpoint_content
 from nanobot.utils.helpers import estimate_message_tokens, truncate_text
 
 _SUMMARY_PREVIEW_CHARS = 4_000
@@ -83,7 +83,7 @@ def session_context_payload(session: Session, *, full: bool = False) -> dict[str
                 "content": _message_text(message.get("content")),
                 "checkpoint": (
                     message.get("role") == "user"
-                    and message.get("content") == summary_continuation_text()
+                    and is_summary_checkpoint_content(message.get("content"))
                 ),
             }
             for message in replay

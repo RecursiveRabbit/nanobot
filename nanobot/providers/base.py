@@ -1131,6 +1131,11 @@ class LLMProvider(ABC):
         if not messages:
             return messages
 
+        # Local import: providers must not import the session package at
+        # module load — session.manager imports this module, so a top-level
+        # import would cycle.
+        from nanobot.session.summary import is_summary_checkpoint_content
+
         merged: list[dict[str, Any]] = []
         for msg in messages:
             role = msg.get("role")
@@ -1142,6 +1147,18 @@ class LLMProvider(ABC):
                 and role in ("user", "assistant")
             ):
                 prev = merged[-1]
+                if role == "user" and (
+                    is_summary_checkpoint_content(prev.get("content"))
+                    or is_summary_checkpoint_content(msg.get("content"))
+                ):
+                    # The summary-checkpoint marker is bookkeeping, not
+                    # conversation: its content already rides the system
+                    # prompt's archived-summary block. Fusing it into an
+                    # adjacent user turn would put harness text inside the
+                    # operator's message, so the marker is dropped instead.
+                    if is_summary_checkpoint_content(prev.get("content")):
+                        merged[-1] = dict(msg)
+                    continue
                 if role == "assistant":
                     prev_has_tools = bool(prev.get("tool_calls"))
                     curr_has_tools = bool(msg.get("tool_calls"))
