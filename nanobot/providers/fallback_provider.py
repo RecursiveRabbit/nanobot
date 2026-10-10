@@ -152,6 +152,23 @@ class FallbackProvider(LLMProvider):
     def get_default_model(self) -> str:
         return self._primary.get_default_model()
 
+    @property
+    def effective_context_window_tokens(self) -> int | None:
+        """The window contract, answered by the chain's own state.
+
+        Closed or half-open circuit: the next request goes to the primary
+        (the probe will tell), so the primary's window. Open circuit: the
+        next request skips the primary and tries fallbacks in order, so
+        the first candidate's window. Any unknown window yields None and
+        the snapshot floor governs — no number is ever invented.
+        """
+        if not self._has_fallbacks:
+            return None
+        if self._primary_available():
+            return self._primary_context_window_tokens
+        first = self._fallback_presets[0]
+        return getattr(first, "context_window_tokens", None)
+
     def set_fallback_model_observer(self, observer: FallbackModelObserver | None) -> None:
         """Attach a process-level observer without changing request call signatures."""
         self._fallback_model_observer = observer

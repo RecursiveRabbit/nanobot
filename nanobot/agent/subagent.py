@@ -166,7 +166,7 @@ class SubagentManager:
             stacklevel=2,
         )
         context_window_tokens = (
-            self._compat_runtime.context_window_tokens
+            self._compat_runtime.snapshot_context_window_tokens
             if self._compat_runtime is not None
             else AgentDefaults().context_window_tokens
         )
@@ -190,7 +190,7 @@ class SubagentManager:
         return LLMRuntime.capture(
             runtime.provider,
             runtime.model,
-            context_window_tokens=runtime.context_window_tokens,
+            context_window_tokens=runtime.snapshot_context_window_tokens,
         )
 
     def _subagent_tools_config(self) -> ToolsConfig:

@@ -810,6 +810,20 @@ class LLMProvider(ABC):
         """Whether requests may include provider-native context compaction."""
         return False
 
+    @property
+    def effective_context_window_tokens(self) -> int | None:
+        """The window of the model that would serve the *next* request.
+
+        The window contract (Evans 2026-10-10): the provider owns this
+        number; every consumer reads it through
+        ``LLMRuntime.context_window_tokens`` and never re-derives it.
+        Plain providers answer ``None`` — the captured snapshot governs.
+        ``FallbackProvider`` answers dynamically: the primary's window
+        while its circuit is closed or half-open, the first fallback
+        candidate's window while the circuit is open.
+        """
+        return None
+
     @staticmethod
     def _sanitize_empty_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Sanitize message content: fix empty blocks, strip internal _meta fields.

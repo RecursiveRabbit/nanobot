@@ -159,7 +159,7 @@ class ModelRuntimeResolver:
             raise TypeError("context_window_tokens must be an integer")
         self._runtime = replace(
             self._runtime,
-            context_window_tokens=context_window_tokens,
+            snapshot_context_window_tokens=context_window_tokens,
         )
         return self._runtime
 
@@ -171,7 +171,7 @@ class ModelRuntimeResolver:
         captured = LLMRuntime.capture(
             runtime.provider,
             runtime.model,
-            context_window_tokens=runtime.context_window_tokens,
+            context_window_tokens=runtime.snapshot_context_window_tokens,
             model_preset=runtime.model_preset,
             snapshot_signature=runtime.snapshot_signature,
         )
@@ -236,7 +236,7 @@ class ModelRuntimeResolver:
                 provider=self._runtime.provider,
                 model=model,
                 generation=self._runtime.generation,
-                context_window_tokens=self._runtime.context_window_tokens,
+                snapshot_context_window_tokens=self._runtime.snapshot_context_window_tokens,
                 snapshot_signature=("model_override", model),
             )
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,12 +14,14 @@ from loguru import logger
 from nanobot.config.schema import ModelPresetConfig
 from nanobot.events import RetryStatusEvent
 from nanobot.providers.base import (
+    GenerationSettings,
     LLMProvider,
     LLMResponse,
     ProviderCallContext,
     ProviderConversationState,
 )
 from nanobot.providers.conversation_state import ProviderConversationStateController
+from nanobot.providers import fallback_provider as fallback_module
 from nanobot.providers.fallback_provider import FallbackProvider
 from nanobot.providers.openai_responses import resolve_compact_threshold
 
@@ -248,9 +251,16 @@ def test_provider_signature_tracks_fallback_presets_and_provider_config() -> Non
     assert signature != provider_signature(Config.model_validate(changed_key))
 
 
-def test_provider_snapshot_uses_smallest_fallback_context_window() -> None:
+def test_provider_snapshot_carries_primary_window_and_live_contract() -> None:
+    """The window contract (Evans 2026-10-10): no static min() clip.
+
+    With every window in the chain known, the snapshot carries the primary's
+    window; the FallbackProvider's live contract narrows the effective budget
+    exactly while the circuit is open, and restores it on recovery.
+    """
     from nanobot.config.schema import Config
     from nanobot.providers.factory import build_provider_snapshot
+    from nanobot.utils.llm_runtime import runtime_from_provider_snapshot
 
     config = Config.model_validate({
         "agents": {
@@ -280,9 +290,53 @@ def test_provider_snapshot_uses_smallest_fallback_context_window() -> None:
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
         snapshot = build_provider_snapshot(config)
 
-    assert snapshot.context_window_tokens == 64000
+    # The snapshot is the primary's window, not min(primary, fallback).
+    assert snapshot.context_window_tokens == 128000
     assert isinstance(snapshot.provider, FallbackProvider)
     assert snapshot.provider._primary_context_window_tokens == 128000
+
+    runtime = runtime_from_provider_snapshot(snapshot)
+
+    # Circuit closed: the contract answers the primary's window.
+    assert snapshot.provider.effective_context_window_tokens == 128000
+    assert runtime.context_window_tokens == 128000
+
+    # Circuit open: the next request would skip to the first fallback, so the
+    # effective budget narrows to its window.
+    snapshot.provider._primary_tripped_at = time.monotonic()
+    assert snapshot.provider.effective_context_window_tokens == 64000
+    assert runtime.context_window_tokens == 64000
+
+    # Half-open: the probe goes to the primary — the contract answers the
+    # primary's window again.
+    snapshot.provider._primary_tripped_at = (
+        time.monotonic() - fallback_module._PRIMARY_COOLDOWN_S
+    )
+    assert snapshot.provider.effective_context_window_tokens == 128000
+    assert runtime.context_window_tokens == 128000
+
+
+def test_runtime_contract_silence_leaves_snapshot_untouched() -> None:
+    """Plain providers speak no contract; the snapshot window governs."""
+    from nanobot.utils.llm_runtime import LLMRuntime
+
+    provider = MagicMock(spec=LLMProvider)
+    provider.generation = GenerationSettings()
+    provider.effective_context_window_tokens = None
+    runtime = LLMRuntime.capture(provider, "plain-model", context_window_tokens=50_000)
+    assert runtime.context_window_tokens == 50_000
+
+
+def test_runtime_contract_never_exceeds_snapshot_floor() -> None:
+    """min(snapshot, contract): a contract wider than the snapshot cannot
+    inflate the budget past what the snapshot builder stamped."""
+    from nanobot.utils.llm_runtime import LLMRuntime
+
+    provider = MagicMock(spec=LLMProvider)
+    provider.generation = GenerationSettings()
+    provider.effective_context_window_tokens = 1_000_000
+    runtime = LLMRuntime.capture(provider, "model", context_window_tokens=50_000)
+    assert runtime.context_window_tokens == 50_000
 
 
 def test_factory_injects_configured_identity_into_primary_and_fallback_leaves() -> None:

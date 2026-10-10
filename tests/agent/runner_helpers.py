@@ -49,6 +49,6 @@ def make_run_spec(provider: LLMProvider, **kwargs: Any) -> AgentRunSpec:
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
         ),
-        context_window_tokens=context_window_tokens,
+        snapshot_context_window_tokens=context_window_tokens,
     )
     return AgentRunSpec(runtime=runtime, **kwargs)

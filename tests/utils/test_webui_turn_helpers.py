@@ -166,7 +166,7 @@ async def test_fallback_model_is_scoped_to_its_websocket_chat() -> None:
         provider=MagicMock(),
         model="openai/gpt-4.1",
         generation=GenerationSettings(),
-        context_window_tokens=16_000,
+        snapshot_context_window_tokens=16_000,
         model_preset="Deep Research",
     )
     with request_context(
@@ -225,7 +225,7 @@ async def test_admitted_runtime_publishes_chat_scoped_model_and_preset(tmp_path)
         provider=MagicMock(),
         model="openai-codex/gpt-5.6",
         generation=GenerationSettings(),
-        context_window_tokens=262_144,
+        snapshot_context_window_tokens=262_144,
         model_preset="Codex",
     )
 

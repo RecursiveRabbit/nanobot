@@ -18,14 +18,35 @@ class LLMRuntime:
     The provider itself is stateful, but all mutable selection and generation
     values are copied into this frozen value.  Consumers must use these fields
     instead of consulting ``provider.generation`` after admission.
+
+    ``snapshot_context_window_tokens`` is the window captured at snapshot
+    build time.  Consumers never read it directly for budgeting; they read
+    the ``context_window_tokens`` property — the one door — which consults
+    the provider's window contract live.
     """
 
     provider: LLMProvider
     model: str
     generation: GenerationSettings
-    context_window_tokens: int
+    snapshot_context_window_tokens: int
     model_preset: str | None = None
     snapshot_signature: tuple[object, ...] | None = None
+
+    @property
+    def context_window_tokens(self) -> int:
+        """The one door (Evans 2026-10-10): every budget read passes through here.
+
+        When the provider speaks the window contract
+        (``effective_context_window_tokens``), the budget is
+        ``min(snapshot, contract)``: a healthy primary answers its own window,
+        a serving fallback narrows the budget the turn after failover, and a
+        recovered primary restores it. When the contract is silent (plain
+        providers, unknown windows) the snapshot stands unchanged.
+        """
+        contract = self.provider.effective_context_window_tokens
+        if not isinstance(contract, int) or isinstance(contract, bool) or contract <= 0:
+            return self.snapshot_context_window_tokens
+        return min(self.snapshot_context_window_tokens, contract)
 
     @classmethod
     def capture(
@@ -52,7 +73,7 @@ class LLMRuntime:
                     defaults.reasoning_effort,
                 ),
             ),
-            context_window_tokens=context_window_tokens,
+            snapshot_context_window_tokens=context_window_tokens,
             model_preset=model_preset,
             snapshot_signature=snapshot_signature,
         )
@@ -91,7 +112,7 @@ def runtime_from_provider_snapshot(
             provider=snapshot.provider,
             model=snapshot.model,
             generation=snapshot.generation,
-            context_window_tokens=snapshot.context_window_tokens,
+            snapshot_context_window_tokens=snapshot.context_window_tokens,
             model_preset=snapshot.model_preset,
             snapshot_signature=snapshot.signature,
         )

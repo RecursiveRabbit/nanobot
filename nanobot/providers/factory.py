@@ -386,10 +386,23 @@ def build_provider_snapshot(
         fallback.context_window_tokens
         for fallback in _resolve_fallback_presets(config, resolved)
     ]
+    # The clip relaxes (Evans 2026-10-10): when every window in the failover
+    # chain is known, the snapshot carries the primary's own window and the
+    # live contract — FallbackProvider.effective_context_window_tokens, read
+    # through LLMRuntime.context_window_tokens — narrows the budget exactly
+    # when a fallback serves and restores it on recovery. The pessimistic
+    # min() remains only as the floor for chains with an unknown window.
+    chain_windows = [resolved.context_window_tokens, *fallback_windows]
+    if fallback_windows and any(window is None for window in chain_windows):
+        snapshot_window = min(
+            window for window in chain_windows if window is not None
+        )
+    else:
+        snapshot_window = resolved.context_window_tokens
     return ProviderSnapshot(
         provider=make_provider(config, preset=resolved),
         model=resolved.model,
-        context_window_tokens=min([resolved.context_window_tokens, *fallback_windows]),
+        context_window_tokens=snapshot_window,
         signature=provider_signature(config, preset=resolved),
         generation=resolved.to_generation_settings(),
         model_preset=selected_preset,

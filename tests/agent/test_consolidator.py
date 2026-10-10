@@ -394,7 +394,7 @@ class TestConsolidatorArchiveErrorHandling:
     async def test_archive_propagates_template_failure_without_raw_archive(
         self, consolidator, mock_provider, runtime, monkeypatch
     ):
-        runtime = replace(runtime, context_window_tokens=128_000)
+        runtime = replace(runtime, snapshot_context_window_tokens=128_000)
         consolidator.store.raw_archive = MagicMock()
         monkeypatch.setattr(
             "nanobot.agent.memory.render_template",
@@ -1415,7 +1415,7 @@ class TestCompactIdleSession:
         store,
         runtime,
     ):
-        runtime = replace(runtime, context_window_tokens=1_000)
+        runtime = replace(runtime, snapshot_context_window_tokens=1_000)
         sessions = real_consolidator.sessions
         session = sessions.get_or_create("sdk:oversized")
         session.add_message("user", "x" * 100_000)
