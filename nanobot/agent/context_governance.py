@@ -336,6 +336,74 @@ class ContextGovernor:
             prepared.append(injection)
         return prepared
 
+    @classmethod
+    def _merge_adjacent_assistant_messages_for_model(
+        cls,
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Merge adjacent assistant messages that carry no tool calls.
+
+        The alternation law (Evans 2026-10-10): providers never fuse message
+        content; alternation is constructed HERE, visibly. An assistant
+        message with tool_calls is always followed by its tool results, so
+        tool-call-free adjacency only arises from views that drop tool
+        traffic (the fold's narrative view) or placeholder stripping —
+        exactly the messages that are safe to join. (Born of the 2026-10-11
+        fold failure: the archive pass bypasses the governor and its
+        narrative view produced adjacent assistants the provider rightly
+        refused.)
+        """
+        prepared: list[dict[str, Any]] = []
+        for source in messages:
+            injection = deepcopy(source)
+            if (
+                prepared
+                and injection.get("role") == "assistant"
+                and prepared[-1].get("role") == "assistant"
+                and not injection.get("tool_calls")
+                and not prepared[-1].get("tool_calls")
+                and not is_retired_summary_checkpoint(injection)
+                and not is_retired_summary_checkpoint(prepared[-1])
+                and not is_hidden_history_message(injection)
+                and not is_hidden_history_message(prepared[-1])
+                and allows_conversation_message_merge(injection)
+                and allows_conversation_message_merge(prepared[-1])
+            ):
+                merged = dict(prepared[-1])
+                merged["content"] = cls._merge_message_content(
+                    merged.get("content"),
+                    injection.get("content"),
+                )
+                left_reasoning = merged.get("reasoning_content")
+                right_reasoning = injection.get("reasoning_content")
+                if isinstance(left_reasoning, str) and isinstance(right_reasoning, str):
+                    merged["reasoning_content"] = (
+                        f"{left_reasoning}\n\n{right_reasoning}"
+                        if left_reasoning
+                        else right_reasoning
+                    )
+                elif isinstance(right_reasoning, str):
+                    merged["reasoning_content"] = right_reasoning
+                prepared[-1] = merged
+                continue
+            prepared.append(injection)
+        return prepared
+
+    @classmethod
+    def construct_role_alternation(
+        cls,
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Construct visible role alternation in a model-facing copy.
+
+        The one constructor for the alternation law: every dispatch path —
+        the turn pipeline and the fold's archive pass alike — must pass
+        through here before a request leaves the process. Providers
+        validate; they never merge.
+        """
+        merged = cls._merge_adjacent_user_messages_for_model(messages)
+        return cls._merge_adjacent_assistant_messages_for_model(merged)
+
     def prepare_messages_for_model(
         self,
         config: ContextGovernanceConfig,
@@ -343,7 +411,7 @@ class ContextGovernor:
     ) -> list[dict[str, Any]]:
         """Build the normalized model-facing copy of a raw transcript."""
         governed = self.prepare_for_model(config, messages)
-        return self._merge_adjacent_user_messages_for_model(governed)
+        return self.construct_role_alternation(governed)
 
     def prepare_for_model(
         self,

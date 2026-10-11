@@ -518,6 +518,59 @@ class TestCompactIdleSession:
         assert reloaded.updated_at == old_ts
 
     @pytest.mark.asyncio
+    async def test_archive_constructs_visible_alternation_for_validating_provider(
+        self, real_consolidator, mock_provider, runtime
+    ):
+        """The 2026-10-11 fold failure: the narrative view drops tool
+        traffic, leaving adjacent assistant messages; providers that enforce
+        the alternation law refuse them loudly. The archive pass must
+        construct alternation visibly before dispatch (the governor's one
+        constructor) — this provider double enforces the real validator."""
+        from nanobot.providers.base import LLMProvider
+
+        dispatched: list[list[dict]] = []
+
+        async def validating_request(*, messages, **_kwargs):
+            dispatched.append(messages)
+            LLMProvider._enforce_role_alternation(messages)
+            return MagicMock(content="Summary of old conversation.", finish_reason="stop")
+
+        mock_provider.chat_stream_with_retry = validating_request
+        sessions = real_consolidator.sessions
+        session = sessions.get_or_create("cli:alternation")
+        session.add_message("user", "read those files")
+        session.add_message(
+            "assistant",
+            "",
+            tool_calls=[{
+                "id": "call-1",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": "{}"},
+            }],
+        )
+        session.add_message("tool", "a very large file body", tool_call_id="call-1", name="read_file")
+        session.add_message("assistant", "here is what I found")
+        sessions.save(session)
+
+        result = await real_consolidator.compact_idle_session(
+            "cli:alternation", runtime=runtime
+        )
+
+        assert result == "Summary of old conversation."
+        assert dispatched, "the archive pass must reach the provider"
+        roles = [m.get("role") for m in dispatched[0]]
+        for left, right in zip(roles, roles[1:]):
+            assert not (
+                left == right and left in ("user", "assistant")
+            ), f"adjacent same-role messages survived: {roles}"
+        # The merge is visible: the assistant text survived the join.
+        assert any(
+            "here is what I found" in str(m.get("content"))
+            for m in dispatched[0]
+            if m.get("role") == "assistant"
+        )
+
+    @pytest.mark.asyncio
     async def test_emits_manual_compaction_lifecycle(
         self, real_consolidator, mock_provider, runtime
     ):
@@ -1082,11 +1135,19 @@ class TestCompactIdleSession:
         assert reloaded.get_history(max_messages=25) == []
 
         # Both the first question and the final tool-heavy exchange are summarized.
+        # Adjacent same-role runs are merged visibly (the alternation law,
+        # 2026-10-11) — assert against the joined text, not message identity.
         archived_call = mock_provider.chat_stream_with_retry.call_args
-        sent_content = [message.get("content") for message in archived_call.kwargs["messages"]]
-        assert "user-00" in sent_content
-        assert "assistant-09" in sent_content
-        assert "user-14" in sent_content
+        sent_messages = archived_call.kwargs["messages"]
+        sent_text = "\n".join(str(message.get("content")) for message in sent_messages)
+        assert "user-00" in sent_text
+        assert "assistant-09" in sent_text
+        assert "user-14" in sent_text
+        roles = [message.get("role") for message in sent_messages]
+        for left, right in zip(roles, roles[1:]):
+            assert not (
+                left == right and left in ("user", "assistant")
+            ), f"adjacent same-role messages survived: {roles}"
 
     @pytest.mark.asyncio
     async def test_preserves_tool_history_and_persists_only_overview(
@@ -1120,10 +1181,12 @@ class TestCompactIdleSession:
         # The 2026-09-29 ruling: the summarizer's view drops tool traffic
         # (results AND the calls, so no provider sees an unpaired call).
         # The stored record keeps everything — verified below.
+        # The 2026-10-11 alternation law: dropping tool traffic leaves
+        # adjacent assistants, which the archive pass merges VISIBLY (the
+        # governor's constructor) — providers never fuse invisibly.
         assert [message["role"] for message in sent_messages] == [
             "system",
             "user",
-            "assistant",
             "assistant",
             "user",
         ]

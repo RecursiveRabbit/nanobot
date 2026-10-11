@@ -1905,3 +1905,51 @@ def test_strip_placeholder_keeps_assistant_with_tool_calls():
     ]
     result = ContextGovernor.strip_placeholder_assistant_messages(messages)
     assert result is messages
+
+
+def test_construct_role_alternation_merges_tool_free_assistants():
+    governor = ContextGovernor()
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "question"},
+        {"role": "assistant", "content": ""},
+        {"role": "assistant", "content": "answer", "reasoning_content": "thinking"},
+    ]
+    merged = governor.construct_role_alternation(messages)
+    assert [m["role"] for m in merged] == ["system", "user", "assistant"]
+    assert merged[2]["content"] == "answer"
+    assert merged[2]["reasoning_content"] == "thinking"
+
+
+def test_construct_role_alternation_keeps_tool_call_pairs_apart():
+    governor = ContextGovernor()
+    messages = [
+        {"role": "user", "content": "question"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call-1",
+                "type": "function",
+                "function": {"name": "inspect", "arguments": "{}"},
+            }],
+        },
+        {"role": "assistant", "content": "interim note"},
+    ]
+    merged = governor.construct_role_alternation(messages)
+    # An assistant carrying tool_calls is never fused — its results must
+    # follow it. Adjacency here stays visible to the validator.
+    assert [m["role"] for m in merged] == ["user", "assistant", "assistant"]
+    assert merged[1].get("tool_calls")
+
+
+def test_construct_role_alternation_merges_reasoning_content():
+    governor = ContextGovernor()
+    messages = [
+        {"role": "assistant", "content": "part one", "reasoning_content": "r1"},
+        {"role": "assistant", "content": "part two", "reasoning_content": "r2"},
+    ]
+    merged = governor.construct_role_alternation(messages)
+    assert len(merged) == 1
+    assert merged[0]["content"] == "part one\n\npart two"
+    assert merged[0]["reasoning_content"] == "r1\n\nr2"

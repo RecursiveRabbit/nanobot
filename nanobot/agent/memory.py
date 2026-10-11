@@ -561,6 +561,18 @@ class MemoryArchiver:
                 request_messages[-1] = merged_last
             else:
                 request_messages.append(prompt_message)
+        # The alternation law (Evans 2026-10-10): this pass dispatches
+        # straight to the provider — no governor stands between it and the
+        # wire. Construct role alternation HERE, visibly, the moment assembly
+        # completes. The 2026-10-11 fold failure: the narrative view drops
+        # tool traffic, leaving adjacent assistants that the provider
+        # rightly refused, and every 05:00 fold died of it.
+        # (Local import: context_governance -> agent.context -> memory.)
+        from nanobot.agent.context_governance import ContextGovernor
+
+        request_messages = ContextGovernor.construct_role_alternation(
+            request_messages
+        )
         if input_token_budget is not None and provider_context is None:
             estimated, source = estimate_prompt_tokens_chain(
                 runtime.provider,
