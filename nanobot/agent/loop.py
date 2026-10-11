@@ -21,10 +21,16 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypeVar, cast
 from loguru import logger
 
 from nanobot.agent import context as agent_context
+from nanobot.agent import goodnight
 from nanobot.agent import model_presets as preset_helpers
 from nanobot.agent.autocompact import AutoCompact
 from nanobot.agent.automation_turns import publish_next_deferred_turn
 from nanobot.agent.context import ContextBuilder, PersistedPromptContextResolver, TranscriptInput
+from nanobot.agent.context_governance import (
+    CONTEXT_STRIP_METADATA_KEY,
+    CONTEXT_STRIP_PLACEHOLDER,
+    ContextStripOutcome,
+)
 from nanobot.agent.cron_turns import CronTurnCoordinator
 from nanobot.agent.hook import AgentHook, AgentHookContext, AgentTurnHookFactory
 from nanobot.agent.memory import Consolidator
@@ -38,9 +44,9 @@ from nanobot.agent.runner import (
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.context import RequestContext, bind_request_context, reset_request_context
 from nanobot.agent.tools.exec_session import ExecSessionManager
+from nanobot.agent.tools.execution import execute_tool_calls
 from nanobot.agent.tools.file_state import FileStateStore, bind_file_states, reset_file_states
 from nanobot.agent.tools.message import capture_message_deliveries
-from nanobot.agent.tools.execution import execute_tool_calls
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.runtime_control import AgentRuntimeControl
 from nanobot.agent.turn_delivery import (
@@ -102,11 +108,6 @@ from nanobot.session.summary import (
     session_summary_from_metadata,
 )
 from nanobot.triggers.local_turns import LocalTriggerTurnCoordinator
-from nanobot.agent.context_governance import (
-    CONTEXT_STRIP_METADATA_KEY,
-    CONTEXT_STRIP_PLACEHOLDER,
-    ContextStripOutcome,
-)
 from nanobot.utils.cancellation import task_is_cancelling
 from nanobot.utils.document import reference_non_image_attachments
 from nanobot.utils.harness_errors import write_harness_error, write_preservation_sibling
@@ -773,6 +774,7 @@ class AgentLoop:
             media=ctx.msg.media if ctx.kind is TurnKind.USER and ctx.msg.media else None,
             session_summary=ctx.pending_summary,
             runtime_context_blocks=ctx.runtime_context_blocks,
+            baton_text=goodnight.load_baton_text(self.workspace, ctx.session.metadata),
         )
 
     async def _context_strip_for_turn(
@@ -1376,7 +1378,6 @@ class AgentLoop:
         request_token = bind_request_context(request_ctx)
         workspace_token = bind_workspace_scope(effective_scope)
         turn_scope_stack = ExitStack()
-        session_metadata = session.metadata if session is not None else None
         try:
             for scope in turn_scopes or ():
                 turn_scope_stack.enter_context(scope)
@@ -1892,6 +1893,7 @@ class AgentLoop:
         await self._run_turn_stage(ctx, "run", self._run_turn)
         await self._run_turn_stage(ctx, "save", self._persist_turn)
         await self._run_turn_stage(ctx, "respond", self._prepare_outbound)
+        await self._run_turn_stage(ctx, "goodnight", self._goodnight_stage)
         return ctx.outbound
 
     async def _run_turn_stage(
@@ -1920,6 +1922,22 @@ class AgentLoop:
             duration_ms,
         )
         return result
+
+    async def _goodnight_stage(self, ctx: TurnContext) -> None:
+        """The Goodnight sentinel (spec: goodnight-fold.md): armed by the
+        beat's fold turn only; the reply is string-searched; on the word the
+        context clears after a byte-verified backup, and the next session
+        wakes with the baton. Unarmed replies are never scanned into action.
+        """
+        if ctx.kind is not TurnKind.USER or ctx.session is None:
+            return
+        session = ctx.session
+        if not goodnight.is_armed(session):
+            return
+        if not goodnight.is_goodnight(ctx.final_content):
+            return
+        if goodnight.clear_for_goodnight(self.sessions, session):
+            ctx.session = self.sessions.get_or_create(ctx.session_key)
 
     def _assemble_outbound(
         self,
@@ -1998,6 +2016,13 @@ class AgentLoop:
             delivery=ctx.delivery,
             is_user_turn=ctx.original_user_text is not None,
         )
+        if ctx.kind is TurnKind.USER:
+            # The Goodnight fold's sentinel arming (spec: goodnight-fold.md):
+            # the beat's fold turn arms; any other user turn disarms.
+            if goodnight.arm_if_fold_delivery(session, msg.sender_id):
+                self.sessions.save(session)
+            elif goodnight.disarm_for_user_turn(session, msg.sender_id):
+                self.sessions.save(session)
         await ctx.delivery.started()
         if ctx.kind is TurnKind.USER:
             self.workspace_scopes.persist_message_scope(session, msg)
@@ -2546,6 +2571,9 @@ class AgentLoop:
                 history=history,
                 current_message=None,
                 session_summary=summary,
+                baton_text=goodnight.load_baton_text(
+                    scope.project_path or self.workspace, session.metadata
+                ),
             ),
             channel=channel,
             workspace=scope.project_path,

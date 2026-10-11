@@ -32,7 +32,8 @@ from nanobot.session.manager import Session
 from nanobot.session.summary import SessionSummary
 from nanobot.utils.helpers import detect_image_mime, load_bundled_template
 from nanobot.utils.prompt_templates import render_template
-from nanobot.utils.strings import register_literal, text as string_text
+from nanobot.utils.strings import register_literal
+from nanobot.utils.strings import text as string_text
 
 _CURRENT_PROJECT_DEFAULT = register_literal(
     "literal:current_project_block",
@@ -66,6 +67,16 @@ _ARCHIVED_SUMMARY_DEFAULT = register_literal(
     "literal:archived_summary_block",
     "Most Recent Fold: {fold_stamp}\n\n"
     "{text}",
+    group="Compaction",
+)
+
+# The Goodnight fold (Evans 2026-10-11): the baton succeeds to the fold's
+# system-prompt slot. The file is the output — the agent's own writing,
+# rendered as text, never parsed. Declarative voice per the string law.
+_BATON_BLOCK_DEFAULT = register_literal(
+    "literal:baton_block",
+    "Your baton — written by you, for the you that wakes:\n\n"
+    "{baton}",
     group="Compaction",
 )
 
@@ -138,6 +149,7 @@ class TranscriptInput:
     current_role: str = "user"
     session_summary: SessionSummary | None = None
     runtime_context_blocks: Sequence[RuntimeContextBlock] | None = None
+    baton_text: str | None = None
 
     @property
     def message_count(self) -> int:
@@ -164,6 +176,7 @@ class ContextBuilder:
         session_summary: SessionSummary | None = None,
         workspace: Path | None = None,
         include_memory: bool = True,
+        baton_text: str | None = None,
     ) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         root = workspace or self.workspace
@@ -206,7 +219,14 @@ class ContextBuilder:
         if skills_summary:
             parts.append(render_template("agent/skills_section.md", skills_summary=skills_summary))
 
-        if session_summary and session_summary["text"] != "(nothing)":
+        if baton_text:
+            # The Goodnight fold: the baton succeeds to the fold's slot.
+            # The file is the output; the next session wakes with it.
+            parts.append(
+                string_text("literal:baton_block", _BATON_BLOCK_DEFAULT)
+                .replace("{baton}", baton_text)
+            )
+        elif session_summary and session_summary["text"] != "(nothing)":
             parts.append(
                 string_text("literal:archived_summary_block", _ARCHIVED_SUMMARY_DEFAULT)
                 .replace("{fold_stamp}", _fold_stamp(session_summary["last_active"]))
@@ -360,6 +380,7 @@ class ContextBuilder:
                     session_summary=transcript.session_summary,
                     workspace=root,
                     include_memory=include_memory,
+                    baton_text=transcript.baton_text,
                 ),
             },
             *transcript.history,
