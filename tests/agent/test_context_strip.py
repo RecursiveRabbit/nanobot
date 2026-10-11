@@ -30,9 +30,27 @@ def _make_loop(tmp_path):
         loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path)
 
     loop.sessions = mock_sessions.return_value
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir(exist_ok=True)
+
+    def _session_path(key: str):
+        return sessions_dir / f"{key.replace(':', '_')}.jsonl"
+
+    loop.sessions._get_session_path = _session_path
     loop.consolidator = MagicMock()
     loop.consolidator.get_lock = lambda key: asyncio.Lock()
     return loop
+
+
+def _persist(session: Session, loop) -> None:
+    """Write the session file the way the turn pipeline would have."""
+    import json
+
+    path = loop.sessions._get_session_path(session.key)
+    path.write_text(
+        "\n".join(json.dumps(message) for message in session.messages) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _session_with_tool_results() -> Session:
@@ -80,10 +98,22 @@ async def test_strip_replaces_every_tool_result_durably(tmp_path):
     loop = _make_loop(tmp_path)
     session = _session_with_tool_results()
     session.provider_state = MagicMock()  # stands in for a ProviderConversationState
+    _persist(session, loop)
+    session_path = loop.sessions._get_session_path(session.key)
+    original_bytes = session_path.read_bytes()
 
     outcome = await loop._context_strip_for_turn(session, workspace=tmp_path)
 
     assert outcome.status == "stripped"
+    # The desk's boundary: BEFORE any mutation, a verified full-fidelity
+    # sibling exists beside the session file, discoverable by ingress.
+    siblings = list(session_path.parent.glob(f"{session_path.name}.pre-strip-*.bak"))
+    assert len(siblings) == 1
+    assert siblings[0].read_bytes() == original_bytes
+    meta_preservation = session.metadata[CONTEXT_STRIP_METADATA_KEY][
+        "last_preservation"
+    ]
+    assert meta_preservation == siblings[0].name
     tool_messages = [m for m in session.messages if m.get("role") == "tool"]
     assert [m["content"] for m in tool_messages] == [
         CONTEXT_STRIP_PLACEHOLDER,
@@ -165,6 +195,7 @@ async def test_strip_consent_grant_releases_one_more(tmp_path):
         "consent_grants": 1,
         "consent_pending": True,
     }
+    _persist(session, loop)
 
     outcome = await loop._context_strip_for_turn(session, workspace=tmp_path)
 
@@ -199,6 +230,29 @@ async def test_strip_without_workspace_still_reports(tmp_path):
 
     assert outcome.status == "consent_required"
     assert outcome.error_file is None
+
+
+async def test_strip_refused_when_preservation_fails(tmp_path, monkeypatch):
+    """No sibling, no strip: the record is never rewritten without its twin."""
+    loop = _make_loop(tmp_path)
+    session = _session_with_tool_results()
+    _persist(session, loop)
+    monkeypatch.setattr(
+        "nanobot.agent.loop.write_preservation_sibling",
+        lambda *args, **kwargs: None,
+    )
+
+    outcome = await loop._context_strip_for_turn(session, workspace=tmp_path)
+
+    assert outcome.status == "refused"
+    assert outcome.reason == "preservation-unavailable"
+    assert any(
+        "large file body" in str(m.get("content")) for m in session.messages
+    )
+    assert CONTEXT_STRIP_METADATA_KEY not in session.metadata
+    assert outcome.error_file is not None
+    record = tmp_path / "errors" / outcome.error_file.removeprefix("./errors/")
+    assert record.exists()
 
 
 async def test_strip_again_command_grants_consent(tmp_path):

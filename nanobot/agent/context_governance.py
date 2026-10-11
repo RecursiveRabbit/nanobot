@@ -68,7 +68,7 @@ CONTEXT_STRIP_METADATA_KEY = "_context_strip"
 class ContextStripOutcome:
     """The result of one strip attempt against the persisted session."""
 
-    status: Literal["stripped", "consent_required"]
+    status: Literal["stripped", "consent_required", "refused"]
     history: list[dict[str, Any]] | None = None
     reason: str | None = None
     error_file: str | None = None

@@ -109,7 +109,7 @@ from nanobot.agent.context_governance import (
 )
 from nanobot.utils.cancellation import task_is_cancelling
 from nanobot.utils.document import reference_non_image_attachments
-from nanobot.utils.harness_errors import write_harness_error
+from nanobot.utils.harness_errors import write_harness_error, write_preservation_sibling
 from nanobot.utils.helpers import image_placeholder_text
 from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.utils.progress_events import output_events
@@ -832,15 +832,13 @@ class AgentLoop:
                     reason="strip-consent-required",
                     error_file=error_file,
                 )
-            stripped = 0
-            for message in session.messages:
-                if (
-                    message.get("role") == "tool"
-                    and message.get("content") != CONTEXT_STRIP_PLACEHOLDER
-                ):
-                    message["content"] = CONTEXT_STRIP_PLACEHOLDER
-                    stripped += 1
-            if stripped == 0:
+            targets = [
+                message
+                for message in session.messages
+                if message.get("role") == "tool"
+                and message.get("content") != CONTEXT_STRIP_PLACEHOLDER
+            ]
+            if not targets:
                 # Pressure with nothing left to strip lives outside tool
                 # results — shears cannot help. Pause and notify.
                 error_file = write_harness_error(
@@ -863,6 +861,49 @@ class AgentLoop:
                     reason="strip-exhausted",
                     error_file=error_file,
                 )
+            # The desk's boundary (2026-10-11, adopted verbatim): BEFORE any
+            # mutation, a verified full-fidelity sibling of the session file
+            # must exist beside it. The strip edits the living context; the
+            # record is never rewritten without a preserved twin. No sibling,
+            # no strip.
+            session_path = self.sessions._get_session_path(session.key)
+            try:
+                self.sessions.save(session)
+            except Exception:
+                logger.exception(
+                    "Context strip for {} could not flush the session; refusing",
+                    session.key,
+                )
+                return ContextStripOutcome(
+                    status="refused",
+                    reason="preservation-unavailable",
+                    error_file=write_harness_error(
+                        workspace,
+                        kind="context-strip-preservation-failed",
+                        session_key=session.key,
+                        body="The session file could not be flushed before strip.",
+                    ),
+                )
+            sibling = write_preservation_sibling(session_path, tag="pre-strip")
+            if sibling is None:
+                return ContextStripOutcome(
+                    status="refused",
+                    reason="preservation-unavailable",
+                    error_file=write_harness_error(
+                        workspace,
+                        kind="context-strip-preservation-failed",
+                        session_key=session.key,
+                        body=(
+                            "The pre-strip full-fidelity sibling could not be "
+                            "written and verified; the strip was refused."
+                        ),
+                    ),
+                )
+            stripped = 0
+            for message in targets:
+                message["content"] = CONTEXT_STRIP_PLACEHOLDER
+                stripped += 1
+            meta["last_preservation"] = sibling.name
             meta.update(
                 count=count + 1,
                 last_at=datetime.now().isoformat(),
