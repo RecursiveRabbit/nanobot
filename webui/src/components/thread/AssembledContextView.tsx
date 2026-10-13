@@ -117,11 +117,7 @@ export function AssembledContextView({
               </div>
               <div className="flex flex-col gap-2">
                 {payload.messages.slice(1).map((message, index) => (
-                  <MessageRow
-                    key={index}
-                    message={message}
-                    checkpoint={payload.message_flags[index + 1]?.checkpoint === true}
-                  />
+                  <MessageRow key={index} message={message} />
                 ))}
                 {draftText?.trim() ? (
                   <PendingSendRow messages={payload.messages} draft={draftText} />
@@ -259,26 +255,8 @@ function PendingSendRow({
   );
 }
 
-function MessageRow({
-  message,
-  checkpoint,
-}: {
-  message: AssembledContextMessage;
-  checkpoint: boolean;
-}) {
+function MessageRow({ message }: { message: AssembledContextMessage }) {
   const { t } = useTranslation();
-
-  if (checkpoint) {
-    return (
-      <div className="flex items-center gap-2 py-1" data-testid="assembled-boundary">
-        <div className="h-px flex-1 bg-amber-500/40" />
-        <div className="text-[11px] text-amber-600 dark:text-amber-400">
-          {t("assembledView.boundary")}
-        </div>
-        <div className="h-px flex-1 bg-amber-500/40" />
-      </div>
-    );
-  }
 
   const roleKey =
     message.role === "user"

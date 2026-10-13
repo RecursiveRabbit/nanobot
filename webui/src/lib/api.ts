@@ -304,7 +304,6 @@ export interface AssembledContextPayload {
   provider: string | null;
   provider_state_resumable: boolean;
   messages: AssembledContextMessage[];
-  message_flags: Array<{ checkpoint: boolean }>;
   tools: Array<{ function?: { name?: string; description?: string } }>;
   mcp_status?: Record<string, string> | null;
 }

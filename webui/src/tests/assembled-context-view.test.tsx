@@ -13,7 +13,7 @@ const PAYLOAD = {
     { role: "system", content: "SYSTEM PROMPT BODY" },
     { role: "user", content: "tail user message" },
   ],
-  message_flags: [{ checkpoint: false }, { checkpoint: false }],
+
   tools: [{ function: { name: "exec", description: "Run a command." } }],
 };
 
@@ -61,7 +61,6 @@ describe("AssembledContextView", () => {
           PAYLOAD.messages[0],
           { role: "assistant", content: "assistant tail" },
         ],
-        message_flags: [{ checkpoint: false }, { checkpoint: false }],
       }),
     }));
     render(
