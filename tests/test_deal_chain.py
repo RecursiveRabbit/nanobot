@@ -29,8 +29,16 @@ class FakeSessionManager:
         self.metadata_updates = []
 
     def read_session_metadata(self, key):
+        # Mirror the real JsonlSessionStore payload shape (nested "metadata")
+        # so the fake can't drift from production again (10-14: the flat
+        # shape here hid the _handle_for mismatch; the chain never fired).
         if key in self.handles:
-            return {"session_handle": self.handles[key]}
+            return {
+                "key": key,
+                "created_at": None,
+                "updated_at": None,
+                "metadata": {"session_handle": self.handles[key]},
+            }
         return None
 
     def get_or_create(self, key):
@@ -111,6 +119,23 @@ def test_fold_with_goodnight_opens_the_day(workspace):
     # the marker was saved BEFORE any content could land
     assert "websocket:deal-nime" in sessions.saved
     assert store.enqueued == [("deal-nime", "This is your day.")]
+
+
+def test_handle_resolution_against_the_real_store(tmp_path):
+    """Regression (2026-10-14): read_session_metadata returns the store
+    payload — session metadata nested under "metadata". _handle_for read
+    the top level, found no handle ever, and the whole Deal chain silently
+    no-oped through a full morning sweep. This test wires the real
+    SessionManager + JsonlSessionStore so the shapes cannot drift apart."""
+    from nanobot.session.manager import SessionManager
+
+    sm = SessionManager(tmp_path / "ws", sessions_root=tmp_path / "sessions")
+    session = sm.get_or_create("websocket:abc")
+    sm.save(session)
+    sm.update_session_metadata("websocket:abc", {"session_handle": "nime"}, fsync=True)
+
+    assert deal._handle_for(sm, "websocket:abc") == "nime"
+    assert deal._handle_for(sm, "websocket:missing") is None
 
 
 def test_fold_declined_means_no_deal_day(workspace):

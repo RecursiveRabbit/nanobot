@@ -85,7 +85,15 @@ def _read_text(workspace: Path, rel: str) -> str | None:
 
 
 def _handle_for(session_manager: Any, key: str) -> str | None:
-    meta = session_manager.read_session_metadata(key) or {}
+    # read_session_metadata returns the store payload
+    # ({"key", "created_at", "updated_at", "metadata": {...}}) — the session's
+    # own metadata lives one level down (session_handles.py reads it the same
+    # way). Reading the top level here silently found no handle, and the
+    # chain swallowed every fold: no logs, no Deal days (2026-10-14).
+    payload = session_manager.read_session_metadata(key) or {}
+    meta = payload.get("metadata")
+    if not isinstance(meta, dict):
+        return None
     handle = meta.get("session_handle")
     return handle if isinstance(handle, str) and handle else None
 
