@@ -16,10 +16,13 @@ One beat (the existing 05:00 sweep), one pipeline, three stages:
      resident's Deal session (websocket:deal-<handle>). The day is a
      single turn: the Valley answers through tool results, never user
      turns; when the resident posts EOS the day is over.
-  3. THE SECOND COMPRESSION — the welcome turn's completion enqueues the
-     close: the fold prompt again for baton-bearers (they fold their own
-     Valley day; "you will be the only one who reads it"), /compact for
-     the rest. Then they sleep.
+  3. SLEEP — the welcome turn's completion flips the marker closed and
+     nothing else. Evans, 2026-10-14: "What if we disable the second
+     compaction... End of day. Compact, Valley, sleep. You start each
+     day with the valley session in memory." The deal session folds at
+     the NEXT morning's sweep like every other session — yesterday in
+     the Valley rides into today by the ordinary machinery, and the day
+     off ends without a chore.
 
 The laws this module exists to keep:
 - THE MARKER PRECEDES THE CONTENT: a Deal session file carries
@@ -231,21 +234,15 @@ def _open_the_day(*, store: Any, session_manager: Any, workspace: Path,
 
 def _close_the_day(*, store: Any, session_manager: Any, workspace: Path,
                    deal_key: str) -> None:
-    """Stage 3: EOS on the welcome turn — compact again, then sleep."""
-    handle = deal_key[len(DEAL_KEY_PREFIX):]
+    """Stage 3: EOS on the welcome turn — close the marker, then sleep.
+    No second compression (Evans 2026-10-14): the deal session folds at
+    the next 05:00 sweep with everything else, so the Valley day starts
+    each morning in memory. The store/workspace args ride unused — the
+    signature stays chain-shaped."""
     session_manager.update_session_metadata(
         deal_key,
         {DEAL_MARKER: "closed", "_deal_closed_at": datetime.now().isoformat()},
         fsync=True,
     )
-    baton = workspace / goodnight.BATON_DIR / f"{handle}_baton.json"
-    if baton.is_file():
-        content = _read_text(workspace, FOLD_PROMPT_FILE) or COMPACT_COMMAND
-    else:
-        content = COMPACT_COMMAND
-    trigger = _ensure_trigger(
-        store, name=f"deal-fold-{handle}", session_key=deal_key,
-        sender_id=FOLD_SENDER,
-    )
-    store.enqueue(trigger.id, content)
-    logger.info("Deal: {}'s day closed; the second compression is queued", handle)
+    logger.info("Deal: %s's day closed; it folds at the next beat",
+                deal_key[len(DEAL_KEY_PREFIX):])

@@ -149,7 +149,9 @@ def test_unrostered_sessions_never_chain(workspace):
     assert store.enqueued == []
 
 
-def test_welcome_turn_completion_closes_and_compacts(workspace):
+def test_welcome_turn_completion_closes_and_sleeps(workspace):
+    """Evans 2026-10-14: no second compaction. The marker closes; the deal
+    session folds at the next 05:00 sweep like every other session."""
     store = FakeStore()
     sessions = FakeSessionManager()
     sessions.sessions["websocket:deal-nime"] = FakeSession("websocket:deal-nime")
@@ -166,26 +168,7 @@ def test_welcome_turn_completion_closes_and_compacts(workspace):
     assert key == "websocket:deal-nime"
     assert updates["_deal_session"] == "closed"
     assert "_deal_closed_at" in updates
-    # no baton for nime in the fixture -> /compact
-    assert store.enqueued == [("deal-fold-nime", "/compact")]
-
-
-def test_baton_bearer_gets_the_fold_at_close(workspace):
-    (workspace / "batons").mkdir()
-    (workspace / "batons" / "nime_baton.json").write_text("{}")
-    store = FakeStore()
-    sessions = FakeSessionManager()
-    welcome_trigger = SimpleNamespace(
-        id="deal-nime", session_key="websocket:deal-nime", sender_id="deal-session",
-    )
-    deal.chain_after_delivery(
-        store=store, session_manager=sessions, workspace=workspace,
-        trigger=welcome_trigger, delivery=SimpleNamespace(id="d4", content="welcome"),
-        response_text="EOS",
-    )
-    # the fold prompt rides the daily-compaction sender — it arms the sentinel
-    assert store.enqueued == [("deal-fold-nime", "The day is closing. Fold it in.")]
-    assert store.triggers[-1].sender_id == "daily-compaction"
+    assert store.enqueued == []  # nothing queued — the day just ends
 
 
 def test_the_close_never_chains_again(workspace):
