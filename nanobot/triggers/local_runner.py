@@ -22,7 +22,7 @@ async def run_local_trigger_queue(
     store: LocalTriggerStore,
     submit_turn: Callable[[InboundMessage], Awaitable[OutboundMessage | None]] | None = None,
     is_channel_enabled: Callable[[str], bool],
-    after_delivery_ok: Callable[[LocalTriggerStore, LocalTrigger, TriggerDelivery, str], None] | None = None,
+    after_delivery_ok: Callable[[LocalTriggerStore, LocalTrigger, TriggerDelivery, str, Callable], Any] | None = None,
     poll_interval_s: float = 0.5,
     batch_size: int = 20,
 ) -> None:
@@ -139,7 +139,7 @@ async def _deliver_delivery(
     *,
     submit_turn: Callable[[InboundMessage], Awaitable[OutboundMessage | None]],
     is_channel_enabled: Callable[[str], bool],
-    after_delivery_ok: Callable[[LocalTriggerStore, LocalTrigger, TriggerDelivery, str], None] | None = None,
+    after_delivery_ok: Callable[[LocalTriggerStore, LocalTrigger, TriggerDelivery, str, Callable], Any] | None = None,
 ) -> None:
     trigger = store.get(delivery.trigger_id)
     if trigger is None:
@@ -173,7 +173,7 @@ async def _deliver_delivery(
     )
     if after_delivery_ok is not None:
         try:
-            after_delivery_ok(store, trigger, delivery, response.content if response else "")
+            await after_delivery_ok(store, trigger, delivery, response.content if response else "", submit_turn)
         except Exception:
             logger.exception(
                 "Trigger: after-delivery hook failed for {}", delivery.id,

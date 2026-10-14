@@ -910,7 +910,7 @@ def _run_gateway(
                         store=trigger_store,
                         submit_turn=agent.submit_local_trigger_turn,
                         is_channel_enabled=lambda name: channels.get_channel(name) is not None,
-                        after_delivery_ok=lambda store, trigger, delivery, response_text: (
+                        after_delivery_ok=lambda store, trigger, delivery, response_text, submit_turn: (
                             deal.chain_after_delivery(
                                 store=store,
                                 session_manager=session_manager,
@@ -918,6 +918,7 @@ def _run_gateway(
                                 trigger=trigger,
                                 delivery=delivery,
                                 response_text=response_text,
+                                submit_turn=submit_turn,
                             )
                         ),
                     ),
