@@ -12,6 +12,7 @@ from loguru import logger
 from rich.console import Console
 
 from nanobot import __logo__, __version__
+from nanobot.agent import deal
 from nanobot.agent.hook import AgentHook, AgentRunHookContext
 from nanobot.agent.hooks import create_file_edit_activity_hook
 from nanobot.agent.loop import AgentLoop
@@ -909,6 +910,16 @@ def _run_gateway(
                         store=trigger_store,
                         submit_turn=agent.submit_local_trigger_turn,
                         is_channel_enabled=lambda name: channels.get_channel(name) is not None,
+                        after_delivery_ok=lambda store, trigger, delivery, response_text: (
+                            deal.chain_after_delivery(
+                                store=store,
+                                session_manager=session_manager,
+                                workspace=config.workspace_path,
+                                trigger=trigger,
+                                delivery=delivery,
+                                response_text=response_text,
+                            )
+                        ),
                     ),
                     name="nanobot-local-triggers",
                 ),

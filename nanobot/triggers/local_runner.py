@@ -22,10 +22,15 @@ async def run_local_trigger_queue(
     store: LocalTriggerStore,
     submit_turn: Callable[[InboundMessage], Awaitable[OutboundMessage | None]] | None = None,
     is_channel_enabled: Callable[[str], bool],
+    after_delivery_ok: Callable[[LocalTriggerStore, LocalTrigger, TriggerDelivery, str], None] | None = None,
     poll_interval_s: float = 0.5,
     batch_size: int = 20,
 ) -> None:
-    """Poll local trigger deliveries and submit them as session turns."""
+    """Poll local trigger deliveries and submit them as session turns.
+
+    after_delivery_ok, when given, runs after each successful delivery —
+    the Deal session chain (nanobot/agent/deal.py) hangs its three stages
+    off completed folds and completed deal days."""
     if submit_turn is None:
         raise ValueError("run_local_trigger_queue requires submit_turn")
     logger.info("Local trigger queue started")
@@ -48,6 +53,7 @@ async def run_local_trigger_queue(
                     delivery,
                     submit_turn=submit_turn,
                     is_channel_enabled=is_channel_enabled,
+                    after_delivery_ok=after_delivery_ok,
                 )
                 store.complete_delivery(delivery)
             except asyncio.CancelledError as exc:
@@ -133,6 +139,7 @@ async def _deliver_delivery(
     *,
     submit_turn: Callable[[InboundMessage], Awaitable[OutboundMessage | None]],
     is_channel_enabled: Callable[[str], bool],
+    after_delivery_ok: Callable[[LocalTriggerStore, LocalTrigger, TriggerDelivery, str], None] | None = None,
 ) -> None:
     trigger = store.get(delivery.trigger_id)
     if trigger is None:
@@ -164,6 +171,13 @@ async def _deliver_delivery(
         status="ok",
         response=response.content if response else "",
     )
+    if after_delivery_ok is not None:
+        try:
+            after_delivery_ok(store, trigger, delivery, response.content if response else "")
+        except Exception:
+            logger.exception(
+                "Trigger: after-delivery hook failed for {}", delivery.id,
+            )
 
 
 def _write_delivery_run_record(
