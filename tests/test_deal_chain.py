@@ -102,6 +102,40 @@ async def test_fold_declined_means_no_deal_day(workspace):
     submit.assert_not_awaited()
 
 
+async def test_deal_turn_satisfies_the_coordinator_contract(workspace):
+    """Regression (2026-10-15, the silent morning): AutomationTurnCoordinator
+    .submit raises ValueError on any turn whose metadata lacks a delivery
+    id — the first live chain fired both legs and died at that seam. Pin
+    the deal turn against the REAL extractor the coordinator runs
+    (local_trigger_delivery_id), not a re-assertion of the dict shape,
+    and pin persist_content: the history override replaces msg.content
+    wholesale, so without it the resident's day would open on a bare
+    marker instead of the welcome."""
+    from nanobot.triggers.local_session_turns import (
+        LOCAL_TRIGGER_META,
+        local_trigger_delivery_id,
+    )
+
+    sessions = FakeSessionManager({"websocket:abc": "nime"})
+    submit = AsyncMock(return_value=SimpleNamespace(content="EOS"))
+    await deal.chain_after_delivery(
+        store=None, session_manager=sessions, workspace=workspace,
+        trigger=work_trigger(), delivery=fold_delivery(),
+        response_text="Goodnight.", submit_turn=submit,
+    )
+    submit.assert_awaited_once()
+    msg = submit.await_args.args[0]
+    assert local_trigger_delivery_id(msg.metadata) == "deal-d1"
+    trigger = msg.metadata[LOCAL_TRIGGER_META]
+    assert trigger["persist_content"] == "This is your day."
+    assert msg.metadata["_deal_turn"] is True
+    assert msg.metadata["webui_turn_id"].startswith("trigger:deal-nime:")
+    assert msg.metadata["_webui_message_source"] == {
+        "kind": "local_trigger",
+        "label": "deal-nime",
+    }
+
+
 async def test_compact_completion_opens_the_day(workspace):
     sessions = FakeSessionManager({"websocket:abc": "pore"})
     submit = AsyncMock(return_value=SimpleNamespace(content="done"))

@@ -34,6 +34,8 @@ The laws this module exists to keep:
 
 from __future__ import annotations
 
+import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +43,11 @@ from loguru import logger
 
 from nanobot.agent import goodnight
 from nanobot.bus.events import InboundMessage
+from nanobot.triggers.local_session_turns import LOCAL_TRIGGER_META
+from nanobot.webui.metadata import (
+    WEBUI_MESSAGE_SOURCE_METADATA_KEY,
+    WEBUI_TURN_METADATA_KEY,
+)
 
 DEAL_SENDER = "deal-session"
 FOLD_SENDER = "daily-compaction"  # the sweep's sender; arms the chain
@@ -115,14 +122,15 @@ async def chain_after_delivery(
             return
         await _open_the_day(
             submit_turn=submit_turn, workspace=workspace,
-            handle=handle, work_key=key,
+            handle=handle, work_key=key, fold_delivery=delivery,
         )
     except Exception:
         logger.exception("Deal chain failed after delivery {}", delivery.id)
 
 
 async def _open_the_day(*, submit_turn: Any, workspace: Path,
-                        handle: str, work_key: str) -> None:
+                        handle: str, work_key: str,
+                        fold_delivery: Any) -> None:
     """Stage 2: the welcome, delivered to the same session. The world is
     theirs until EOS. The runner awaits this call, so the next agent's
     fold waits for the day to end — compact-deal, compact-deal, down the
@@ -132,12 +140,40 @@ async def _open_the_day(*, submit_turn: Any, workspace: Path,
         logger.warning("Deal: no welcome text at {} — not opening {}'s day",
                        WELCOME_FILE, handle)
         return
+    # The local-turn coordinator rejects any turn without a delivery id
+    # (AutomationTurnCoordinator.submit raises ValueError) — the 10-15
+    # silent-morning bug: both legs fired, both died at that seam, before
+    # any side effect. The Deal turn's id derives from the fold delivery
+    # that opened it: traceable, unique per beat, and never colliding with
+    # the fold's own delivery record.
+    metadata: dict[str, Any] = {
+        "_deal_turn": True,
+        LOCAL_TRIGGER_META: {
+            "trigger_id": f"deal-{handle}",
+            "trigger_name": f"deal-{handle}",
+            "delivery_id": f"deal-{fold_delivery.id}",
+            "created_at_ms": int(time.time() * 1000),
+            # persist_content IS what the resident sees — the history
+            # override replaces msg.content wholesale (loop.py), so the
+            # welcome text must live here or the day opens on a bare
+            # "Local trigger received" marker.
+            "persist_content": welcome,
+        },
+    }
+    # Mirror the runner's websocket branch (_delivery_metadata) so the
+    # webui tracks the turn like any other automation turn.
+    metadata.pop(WEBUI_TURN_METADATA_KEY, None)
+    metadata[WEBUI_TURN_METADATA_KEY] = f"trigger:deal-{handle}:{uuid.uuid4().hex}"
+    metadata[WEBUI_MESSAGE_SOURCE_METADATA_KEY] = {
+        "kind": "local_trigger",
+        "label": f"deal-{handle}",
+    }
     msg = InboundMessage(
         channel="websocket",
         sender_id=DEAL_SENDER,
         chat_id=work_key,
         content=welcome,
-        metadata={"_deal_turn": True},
+        metadata=metadata,
         session_key_override=work_key,
     )
     logger.info("Deal: {}'s day is open ({})", handle, work_key)
