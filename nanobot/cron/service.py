@@ -35,6 +35,17 @@ class CronJobSkippedError(Exception):
     """Raised by cron callbacks when a job was intentionally skipped."""
 
 
+class CronJobModelError(Exception):
+    """Raised by cron callbacks when the job ran but the model/provider failed.
+
+    The turn executed and returned; its content is a provider error, not
+    cognition.  Distinct from a job failure (the machinery broke) and from
+    a skip (the job chose not to run): the run record and the job state must
+    both stamp ``error`` so a dead shift can never masquerade as a healthy
+    one (tuto №12 / studi №14: the ok that lied).
+    """
+
+
 def _now_ms() -> int:
     return int(time.time() * 1000)
 
@@ -679,6 +690,10 @@ class CronService:
             job.state.last_status = "skipped"
             job.state.last_error = str(e) or None
             logger.warning("Cron: job '{}' skipped: {}", job.name, job.state.last_error or "")
+        except CronJobModelError as e:
+            job.state.last_status = "error"
+            job.state.last_error = str(e) or None
+            logger.warning("Cron: job '{}' ran but the model failed: {}", job.name, job.state.last_error or "")
         except asyncio.CancelledError as e:
             current = asyncio.current_task()
             if current is not None and current.cancelling():

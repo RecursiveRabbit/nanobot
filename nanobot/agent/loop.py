@@ -1958,6 +1958,12 @@ class AgentLoop:
 
         event = None
         meta = dict(msg.metadata or {})
+        if stop_reason:
+            # Internal routing field (consumed by turn_delivery.complete and
+            # the bound cron runner, which stamps the run record from it).
+            # A turn that ended on a provider error must be legible as an
+            # error to the record — delivery is not cognition.
+            meta["_stop_reason"] = stop_reason
         if streamed_content and stop_reason not in {"error", "tool_error"}:
             event = StreamedResponseEvent()
         if turn_latency_ms is not None:

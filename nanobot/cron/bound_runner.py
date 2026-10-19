@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from nanobot.agent.tools.cron import CronTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.cron.service import CronJobModelError
 from nanobot.cron.session_delivery import origin_delivery_context
 from nanobot.cron.session_turns import CRON_DEFER_UNTIL_IDLE_META, CRON_TRIGGER_META
 from nanobot.cron.types import CronJob
@@ -151,12 +152,27 @@ async def run_bound_cron_job(
             cron_tool.reset_cron_context(cron_token)
 
     response = resp.content if resp else ""
+    # A turn that ended on a provider error returns content shaped like the
+    # error (runner.py replaces or passes it through) — but the record must
+    # not stamp that "ok".  The honest signal is the turn's stop reason,
+    # stamped onto the outbound metadata by loop._assemble_outbound.
+    # Delivery is not cognition: a dead shift files as error, never ok
+    # (tuto №12; studi's №14 — the run store stamped "ok" over a 403
+    # budget death).
+    stop_reason = resp.metadata.get("_stop_reason") if resp is not None else None
+    turn_failed = stop_reason == "error"
     cron.write_run_record(
         run_id,
         {
             **run_record_base,
-            "status": "ok",
+            "status": "error" if turn_failed else "ok",
             "response": response,
+            "stop_reason": stop_reason,
         },
     )
+    if turn_failed:
+        raise CronJobModelError(
+            f"cron job {job.id} turn ended on a provider error: "
+            f"{response[:200] or 'no content'}"
+        )
     return response
