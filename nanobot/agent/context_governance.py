@@ -419,6 +419,7 @@ class ContextGovernor:
         messages: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         updated = self.strip_placeholder_assistant_messages(messages)
+        updated = self.absorb_channel_delivery_echoes(updated)
         updated = self.strip_malformed_tool_calls(updated)
         updated = self.drop_orphan_tool_results(updated)
         updated = self.backfill_missing_tool_results(updated)
@@ -916,6 +917,78 @@ class ContextGovernor:
         if updated is None:
             return messages
         return updated
+
+    @classmethod
+    def absorb_channel_delivery_echoes(
+        cls,
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Fold proactive-delivery echoes into the following assistant message.
+
+        A ``_channel_delivery`` echo is a mirror of an outbound send (the
+        message tool's delivery path, gateway_runtime._deliver_to_channel)
+        persisted as a bare assistant message with no tool_calls. When the
+        send happens mid-turn, the runner's own assistant+tool_calls message
+        is persisted AFTER the echo — and the pair is a permanent alternation
+        violation no provider accepts, which the adjacent-assistant merge
+        cannot repair (the follower carries tool_calls and may never be
+        fused). The 2026-10-19 ghost: one media delivery echoed into the
+        sender's own tape at index 279 and killed every turn of nime's main
+        session until the line was excised by hand. Evans, same night:
+        "Trying to change agents is a bad idea... we must adjust the harness
+        around them. The send message feature is supposed to work the way
+        you thought it worked."
+
+        The delivery is information the resident should keep ("your account
+        said this"), so an echo that precedes an assistant message is folded
+        INTO that message as a visible prefix — never silently dropped. An
+        echo followed by a user message is already legal alternation and
+        passes through untouched (the replay slicer at session/manager.py
+        keeps those deliberately, since the user may be replying to the
+        delivery). Only the model-facing copy is repaired; the persisted
+        transcript is untouched.
+        """
+        out: list[dict[str, Any]] = []
+        pending: list[dict[str, Any]] = []
+        for msg in messages:
+            is_echo = (
+                msg.get("role") == "assistant"
+                and msg.get("_channel_delivery")
+                and not msg.get("tool_calls")
+            )
+            if is_echo:
+                pending.append(msg)
+                continue
+            if msg.get("role") == "assistant" and pending:
+                merged = deepcopy(msg)
+                prefix_parts: list[str] = []
+                for echo in pending:
+                    content = echo.get("content")
+                    text = content if isinstance(content, str) else ""
+                    if not text.strip() and echo.get("media"):
+                        text = "(attachment)"
+                    logger.debug(
+                        "Absorbing channel-delivery echo into following "
+                        "assistant message: {!r}",
+                        text[:60],
+                    )
+                    prefix_parts.append(
+                        "[channel delivery — this account sent the following "
+                        "out of turn]\n" + text
+                    )
+                merged["content"] = cls._merge_message_content(
+                    "\n".join(prefix_parts),
+                    merged.get("content"),
+                )
+                pending.clear()
+                out.append(merged)
+                continue
+            if pending:
+                out.extend(pending)
+                pending.clear()
+            out.append(msg)
+        out.extend(pending)
+        return out
 
     @staticmethod
     def strip_malformed_tool_calls(
