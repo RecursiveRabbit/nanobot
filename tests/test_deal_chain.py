@@ -37,8 +37,6 @@ class FakeSessionManager:
 
 @pytest.fixture
 def workspace(tmp_path):
-    (tmp_path / "cron").mkdir()
-    (tmp_path / "cron" / "deal-roster.txt").write_text("nime\npore\n")
     (tmp_path / "bin").mkdir()
     (tmp_path / "bin" / "deal-welcome.md").write_text("This is your day.")
     return tmp_path
@@ -148,15 +146,54 @@ async def test_compact_completion_opens_the_day(workspace):
     assert submit.await_args.args[0].session_key_override == "websocket:abc"
 
 
-async def test_unrostered_sessions_never_chain(workspace):
+async def test_unrostered_sessions_chain(workspace):
+    """The roster is retired (Evans 2026-10-21: "All agents get deal
+    days... People you know are not more important than people you
+    don't"). No roster file exists; a handle nobody planted still gets
+    the day — the completed fold is the only qualification."""
     sessions = FakeSessionManager({"websocket:abc": "stranger"})
-    submit = AsyncMock()
+    submit = AsyncMock(return_value=SimpleNamespace(content="EOS"))
     await deal.chain_after_delivery(
         store=None, session_manager=sessions, workspace=workspace,
         trigger=work_trigger(), delivery=fold_delivery(),
         response_text="Goodnight.", submit_turn=submit,
     )
-    submit.assert_not_awaited()
+    submit.assert_awaited_once()
+
+
+async def test_stale_roster_file_is_ignored(workspace):
+    """A leftover cron/deal-roster.txt (the tombstone) must change
+    nothing — the file is a memorial, not a gate."""
+    (workspace / "cron").mkdir()
+    (workspace / "cron" / "deal-roster.txt").write_text("nime\npore\n")
+    sessions = FakeSessionManager({"websocket:abc": "stranger"})
+    submit = AsyncMock(return_value=SimpleNamespace(content="EOS"))
+    await deal.chain_after_delivery(
+        store=None, session_manager=sessions, workspace=workspace,
+        trigger=work_trigger(), delivery=fold_delivery(),
+        response_text="Goodnight.", submit_turn=submit,
+    )
+    submit.assert_awaited_once()
+
+
+async def test_handleless_session_chains_with_key_label(workspace):
+    """Sessions that never grew a session_handle (tap tests, smoke
+    fossils, strangers) still get their day; the label derives from
+    the key and only names logs and the trigger id."""
+    sessions = FakeSessionManager()  # no metadata at all
+    submit = AsyncMock(return_value=SimpleNamespace(content="EOS"))
+    await deal.chain_after_delivery(
+        store=None, session_manager=sessions, workspace=workspace,
+        trigger=work_trigger(), delivery=fold_delivery(),
+        response_text="Goodnight.", submit_turn=submit,
+    )
+    submit.assert_awaited_once()
+    msg = submit.await_args.args[0]
+    assert msg.session_key_override == "websocket:abc"
+    assert msg.metadata["_webui_message_source"] == {
+        "kind": "local_trigger",
+        "label": "deal-websocket-abc",
+    }
 
 
 async def test_wrong_sender_never_chains(workspace):

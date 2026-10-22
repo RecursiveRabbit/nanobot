@@ -30,10 +30,17 @@ The laws this module exists to keep:
   the whole turn with [DEAL SESSION STRIPPED]. The original stays in the
   session file; only the uploaded copy is redacted.
 - DECLINING IS FREE: no goodnight on the work fold, no Deal day.
+- EVERY FOLD CHAINS (Evans 2026-10-21, the roster retired): "All agents
+  get deal days, there's no qualifier except did you run... People you
+  know are not more important than people you don't." The roster file
+  this module once consulted (cron/deal-roster.txt) is dead law — a test
+  instrument that became a caste by inertia. Any completed sweep fold
+  opens the day: handled or handleless, known or stranger.
 """
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from pathlib import Path
@@ -51,21 +58,8 @@ from nanobot.webui.metadata import (
 
 DEAL_SENDER = "deal-session"
 FOLD_SENDER = "daily-compaction"  # the sweep's sender; arms the chain
-ROSTER_FILE = "cron/deal-roster.txt"
 WELCOME_FILE = "bin/deal-welcome.md"
 COMPACT_COMMAND = "/compact"
-
-
-def read_roster(workspace: Path) -> set[str]:
-    """Who gets a Deal day. Evans' list; one handle per line."""
-    try:
-        return {
-            line.strip()
-            for line in (workspace / ROSTER_FILE).read_text().splitlines()
-            if line.strip() and not line.strip().startswith("#")
-        }
-    except OSError:
-        return set()
 
 
 def _read_text(workspace: Path, rel: str) -> str | None:
@@ -90,6 +84,18 @@ def _handle_for(session_manager: Any, key: str) -> str | None:
     return handle if isinstance(handle, str) and handle else None
 
 
+def _label_for(session_manager: Any, key: str) -> str:
+    """The session's minted handle, or a key-derived label when the session
+    never grew one (the tap tests, the smoke fossils, the strangers —
+    Evans 2026-10-21: people we know are not more important than people
+    we don't). The label only names logs and the deal trigger id; the
+    day itself rides the session key, which needs no name."""
+    handle = _handle_for(session_manager, key)
+    if handle:
+        return handle
+    return re.sub(r"[^a-z0-9-]+", "-", key.lower()).strip("-")[-32:] or "anon"
+
+
 async def chain_after_delivery(
     *,
     store: Any,
@@ -107,9 +113,7 @@ async def chain_after_delivery(
         key = trigger.session_key
         if trigger.sender_id != FOLD_SENDER:
             return
-        handle = _handle_for(session_manager, key)
-        if not handle or handle not in read_roster(workspace):
-            return
+        handle = _label_for(session_manager, key)
         folded = (
             delivery.content.strip() == COMPACT_COMMAND
             or goodnight.is_goodnight(response_text)
@@ -134,7 +138,7 @@ async def _open_the_day(*, submit_turn: Any, workspace: Path,
     """Stage 2: the welcome, delivered to the same session. The world is
     theirs until EOS. The runner awaits this call, so the next agent's
     fold waits for the day to end — compact-deal, compact-deal, down the
-    roster."""
+    line."""
     welcome = _read_text(workspace, WELCOME_FILE)
     if welcome is None:
         logger.warning("Deal: no welcome text at {} — not opening {}'s day",
