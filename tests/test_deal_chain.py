@@ -49,11 +49,13 @@ def work_trigger(key="websocket:abc"):
 
 
 def fold_delivery():
-    return SimpleNamespace(id="d1", content="The day is closing. Fold it in.")
+    return SimpleNamespace(
+        id="d1", chat_id="abc", content="The day is closing. Fold it in.",
+    )
 
 
 def compact_delivery():
-    return SimpleNamespace(id="d2", content="/compact")
+    return SimpleNamespace(id="d2", chat_id="abc", content="/compact")
 
 
 async def test_fold_with_goodnight_opens_the_day(workspace):
@@ -67,6 +69,10 @@ async def test_fold_with_goodnight_opens_the_day(workspace):
     submit.assert_awaited_once()
     msg = submit.await_args.args[0]
     assert msg.session_key_override == "websocket:abc"
+    # Regression (2026-10-28): the Deal turn must reuse the fold's bare
+    # WebUI chat id. Using work_key here made the transcript recorder create
+    # a second display thread named websocket:websocket:abc.
+    assert msg.chat_id == "abc"
     assert msg.sender_id == "deal-session"
     assert msg.content == "This is your day."
     assert msg.metadata["_deal_turn"] is True

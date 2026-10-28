@@ -175,7 +175,11 @@ async def _open_the_day(*, submit_turn: Any, workspace: Path,
     msg = InboundMessage(
         channel="websocket",
         sender_id=DEAL_SENDER,
-        chat_id=work_key,
+        # Reuse the fold's public WebUI chat id, not the persisted session
+        # key. The WebUI transcript prepends "websocket:" itself; passing
+        # work_key here writes a display-only websocket:websocket:* thread
+        # alongside the resident's real one (2026-10-28).
+        chat_id=fold_delivery.chat_id,
         content=welcome,
         metadata=metadata,
         session_key_override=work_key,
