@@ -127,6 +127,7 @@ async def chain_after_delivery(
         await _open_the_day(
             submit_turn=submit_turn, workspace=workspace,
             handle=handle, work_key=key, fold_delivery=delivery,
+            fold_chat_id=trigger.chat_id,
         )
     except Exception:
         logger.exception("Deal chain failed after delivery {}", delivery.id)
@@ -134,7 +135,7 @@ async def chain_after_delivery(
 
 async def _open_the_day(*, submit_turn: Any, workspace: Path,
                         handle: str, work_key: str,
-                        fold_delivery: Any) -> None:
+                        fold_delivery: Any, fold_chat_id: str) -> None:
     """Stage 2: the welcome, delivered to the same session. The world is
     theirs until EOS. The runner awaits this call, so the next agent's
     fold waits for the day to end — compact-deal, compact-deal, down the
@@ -175,11 +176,12 @@ async def _open_the_day(*, submit_turn: Any, workspace: Path,
     msg = InboundMessage(
         channel="websocket",
         sender_id=DEAL_SENDER,
-        # Reuse the fold's public WebUI chat id, not the persisted session
+        # Reuse the fold trigger's public chat id, not the persisted session
         # key. The WebUI transcript prepends "websocket:" itself; passing
         # work_key here writes a display-only websocket:websocket:* thread
-        # alongside the resident's real one (2026-10-28).
-        chat_id=fold_delivery.chat_id,
+        # alongside the resident's real one (2026-10-28). The id lives on
+        # LocalTrigger, not TriggerDelivery (2026-10-29 regression).
+        chat_id=fold_chat_id,
         content=welcome,
         metadata=metadata,
         session_key_override=work_key,

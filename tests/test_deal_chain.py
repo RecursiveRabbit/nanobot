@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from nanobot.agent import deal
+from nanobot.triggers.local_types import LocalTrigger, TriggerDelivery
 
 
 class FakeSessionManager:
@@ -43,19 +44,37 @@ def workspace(tmp_path):
 
 
 def work_trigger(key="websocket:abc"):
-    return SimpleNamespace(
-        id="compact-websocket-abc", session_key=key, sender_id="daily-compaction",
+    # Use the runner's real types: the public chat id belongs to the
+    # LocalTrigger, while TriggerDelivery deliberately has no chat_id.
+    # The 2026-10-28 doubles invented delivery.chat_id and let the chain
+    # pass tests while every live Deal day failed with AttributeError.
+    return LocalTrigger(
+        id="compact-websocket-abc",
+        name="compact-websocket-abc",
+        enabled=True,
+        channel="websocket",
+        chat_id="abc",
+        session_key=key,
+        sender_id="daily-compaction",
     )
 
 
 def fold_delivery():
-    return SimpleNamespace(
-        id="d1", chat_id="abc", content="The day is closing. Fold it in.",
+    return TriggerDelivery(
+        id="d1",
+        trigger_id="compact-websocket-abc",
+        content="The day is closing. Fold it in.",
+        created_at_ms=1,
     )
 
 
 def compact_delivery():
-    return SimpleNamespace(id="d2", chat_id="abc", content="/compact")
+    return TriggerDelivery(
+        id="d2",
+        trigger_id="compact-websocket-abc",
+        content="/compact",
+        created_at_ms=1,
+    )
 
 
 async def test_fold_with_goodnight_opens_the_day(workspace):
@@ -69,9 +88,10 @@ async def test_fold_with_goodnight_opens_the_day(workspace):
     submit.assert_awaited_once()
     msg = submit.await_args.args[0]
     assert msg.session_key_override == "websocket:abc"
-    # Regression (2026-10-28): the Deal turn must reuse the fold's bare
-    # WebUI chat id. Using work_key here made the transcript recorder create
-    # a second display thread named websocket:websocket:abc.
+    # Regression (2026-10-28/29): the Deal turn must reuse the fold
+    # trigger's bare WebUI chat id. Using work_key made a display-only
+    # websocket:websocket:abc thread; reading delivery.chat_id instead
+    # crashed every live chain because real deliveries have no such field.
     assert msg.chat_id == "abc"
     assert msg.sender_id == "deal-session"
     assert msg.content == "This is your day."
