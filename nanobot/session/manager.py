@@ -448,7 +448,7 @@ class Session:
                 if not any(key in message for key in ("tool_calls", "reasoning_content", "thinking_blocks")):
                     continue
             entry: dict[str, Any] = {"role": message["role"], "content": content}
-            for key in ("tool_calls", "tool_call_id", "name", "reasoning_content", "thinking_blocks"):
+            for key in ("tool_calls", "tool_call_id", "name", "reasoning_content", "thinking_blocks", "_channel_delivery"):
                 if key in message:
                     entry[key] = message[key]
             out.append(entry)

@@ -326,6 +326,7 @@ def test_get_history_keeps_proactive_delivery_timestamps_out_of_replay_content()
         {
             "role": "assistant",
             "content": "记得喝水",
+            "_channel_delivery": True,
         },
         {
             "role": "user",

@@ -17,6 +17,7 @@ import pytest
 
 from nanobot.agent.context_governance import ContextGovernor
 from nanobot.providers.base import LLMProvider
+from nanobot.session.manager import Session
 
 
 def _ghost(text: str) -> dict:
@@ -130,3 +131,37 @@ def test_no_echoes_is_identity():
         {"role": "user", "content": "c"},
     ]
     assert ContextGovernor.absorb_channel_delivery_echoes(tape) == tape
+
+
+def test_echo_marker_survives_session_get_history_replay():
+    """The 2026-11-03 wedge: Session.get_history rebuilt replay entries with
+    a key whitelist that dropped `_channel_delivery`, so the governor's
+    absorb step never saw the echoes and the ghost shape wedged every turn
+    again (consecutive assistants at the provider's own validation)."""
+    tape = [
+        {"role": "user", "content": "what's our status?"},
+        _ghost("first proactive delivery"),
+        _ghost("second proactive delivery"),
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "exec", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "name": "exec", "content": "ok"},
+        {"role": "assistant", "content": "wrapped up"},
+    ]
+    session = Session(key="websocket:test", messages=tape)
+    history = session.get_history()
+    assert sum(1 for m in history if m.get("_channel_delivery")) == 2
+    governed = _dispatch_shape(history)
+    tool_msg = next(m for m in governed if m.get("tool_calls"))
+    content = str(tool_msg["content"])
+    assert content.index("first proactive delivery") < content.index(
+        "second proactive delivery"
+    )
