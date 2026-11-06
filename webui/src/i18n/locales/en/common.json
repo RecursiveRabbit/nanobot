@@ -1813,6 +1813,8 @@
     "dataTable": "Data table",
     "fileEditPreparing": "Preparing file edit…",
     "openLink": "Open link: {{label}}",
+    "hostedArtifactOpen": "Open {{fileName}} on {{provider}}",
+    "hostedArtifactDownload": "Download raw {{fileName}}",
     "openAttachment": "Open {{name}}",
     "skill": "Skill: {{name}}",
     "automationSourceFallback": "Automation",

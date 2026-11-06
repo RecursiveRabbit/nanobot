@@ -29,6 +29,8 @@ import {
   isLikelyFilePath,
 } from "@/components/FileReferenceChip";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
+import { HostedArtifactLink } from "@/components/HostedArtifactLink";
+import { hostedArtifactFromUrl } from "@/lib/hosted-artifact";
 import { inferMediaKind } from "@/lib/media";
 import { browserSafeFaviconUrls } from "@/lib/provider-brand";
 import { remarkTexMath } from "@/lib/remark-tex-math";
@@ -670,6 +672,15 @@ export default function MarkdownTextRenderer({
         }
         if (isNonNavigableFilePatternLink(href)) {
           return <>{markdownChildren}</>;
+        }
+        const hostedArtifact = hostedArtifactFromUrl(href);
+        if (hostedArtifact) {
+          return (
+            <HostedArtifactLink
+              artifact={hostedArtifact}
+              label={cleanLinkPreviewText(nodeText(markdownChildren))}
+            />
+          );
         }
         return (
           <a

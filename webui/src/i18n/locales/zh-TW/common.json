@@ -1791,6 +1791,8 @@
     "dataTable": "資料表",
     "fileEditPreparing": "正在準備檔案編輯…",
     "openLink": "開啟連結：{{label}}",
+    "hostedArtifactOpen": "在 {{provider}} 上開啟 {{fileName}}",
+    "hostedArtifactDownload": "下載原始檔案 {{fileName}}",
     "openAttachment": "開啟 {{name}}",
     "skill": "技能：{{name}}",
     "forkFromHere": "建立分支",

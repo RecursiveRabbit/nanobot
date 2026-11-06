@@ -74,13 +74,18 @@ export function FileReferenceChip({
               onClick={interactive ? openPreview : undefined}
               onKeyDown={interactive ? onKeyDown : undefined}
               className={cn(
-                "inline-flex max-w-full items-baseline gap-[0.28em] font-medium leading-[inherit]",
-                "text-sky-600 transition-colors hover:text-sky-700",
-                "dark:text-sky-300 dark:hover:text-sky-200",
-                interactive && [
-                  "cursor-pointer rounded-compact",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45",
-                ],
+                "inline-flex max-w-full items-baseline gap-[0.28em] leading-[inherit]",
+                interactive
+                  ? [
+                      "cursor-pointer rounded-compact font-medium",
+                      "text-sky-600 transition-colors hover:text-sky-700",
+                      "dark:text-sky-300 dark:hover:text-sky-200",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45",
+                    ]
+                  : [
+                      "rounded bg-muted px-1 py-0.5 font-mono text-[0.85em]",
+                      "text-foreground/85",
+                    ],
               )}
             >
               <FileReferenceIcon kind={kind} />
@@ -94,8 +99,18 @@ export function FileReferenceChip({
               >
                 {display === "path" && directory ? (
                   <>
-                    <span className="text-muted-foreground/65">{directory}</span>
-                    <span className="font-semibold text-sky-700 dark:text-sky-200">{name}</span>
+                    <span className={interactive ? "text-muted-foreground/65" : "text-muted-foreground/75"}>
+                      {directory}
+                    </span>
+                    <span
+                      className={
+                        interactive
+                          ? "font-semibold text-sky-700 dark:text-sky-200"
+                          : "font-semibold text-foreground/90"
+                      }
+                    >
+                      {name}
+                    </span>
                   </>
                 ) : (
                   displayText
@@ -151,7 +166,7 @@ export function splitFilePath(path: string): { directory: string; name: string }
   };
 }
 
-function fileKindForPath(path: string): FileReferenceKind {
+export function fileKindForPath(path: string): FileReferenceKind {
   const normalized = path.toLowerCase();
   const name = normalized.split(/[\\/]/).pop() ?? normalized;
   const ext = name.includes(".") ? name.split(".").pop() ?? "" : "";
@@ -193,7 +208,7 @@ function fileKindForPath(path: string): FileReferenceKind {
   }
 }
 
-function FileReferenceIcon({ kind }: { kind: FileReferenceKind }) {
+export function FileReferenceIcon({ kind }: { kind: FileReferenceKind }) {
   if (kind === "python") {
     return (
       <svg

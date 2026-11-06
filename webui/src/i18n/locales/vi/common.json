@@ -1791,6 +1791,8 @@
     "dataTable": "Bảng dữ liệu",
     "fileEditPreparing": "Đang chuẩn bị sửa tệp…",
     "openLink": "Mở liên kết: {{label}}",
+    "hostedArtifactOpen": "Mở {{fileName}} trên {{provider}}",
+    "hostedArtifactDownload": "Tải {{fileName}} bản thô",
     "openAttachment": "Mở {{name}}",
     "skill": "Kỹ năng: {{name}}",
     "askAboutSelection": "Hỏi về nội dung này",

@@ -1791,6 +1791,8 @@
     "dataTable": "Tabla de datos",
     "fileEditPreparing": "Preparando la edición del archivo…",
     "openLink": "Abrir enlace: {{label}}",
+    "hostedArtifactOpen": "Abrir {{fileName}} en {{provider}}",
+    "hostedArtifactDownload": "Descargar {{fileName}} sin formato",
     "openAttachment": "Abrir {{name}}",
     "skill": "Habilidad: {{name}}",
     "askAboutSelection": "Preguntar sobre esto",

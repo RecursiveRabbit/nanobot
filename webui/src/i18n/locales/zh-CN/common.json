@@ -1813,6 +1813,8 @@
     "dataTable": "数据表",
     "fileEditPreparing": "正在准备文件编辑…",
     "openLink": "打开链接：{{label}}",
+    "hostedArtifactOpen": "在 {{provider}} 上打开 {{fileName}}",
+    "hostedArtifactDownload": "下载原始文件 {{fileName}}",
     "openAttachment": "打开 {{name}}",
     "skill": "技能：{{name}}",
     "automationSourceFallback": "自动化",

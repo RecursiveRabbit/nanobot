@@ -1791,6 +1791,8 @@
     "dataTable": "データテーブル",
     "fileEditPreparing": "ファイル編集を準備中…",
     "openLink": "リンクを開く: {{label}}",
+    "hostedArtifactOpen": "{{provider}}で{{fileName}}を開く",
+    "hostedArtifactDownload": "生の{{fileName}}をダウンロード",
     "openAttachment": "開く: {{name}}",
     "skill": "スキル: {{name}}",
     "askAboutSelection": "この内容について質問",

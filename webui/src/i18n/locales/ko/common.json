@@ -1791,6 +1791,8 @@
     "dataTable": "데이터 표",
     "fileEditPreparing": "파일 편집 준비 중…",
     "openLink": "링크 열기: {{label}}",
+    "hostedArtifactOpen": "{{provider}}에서 {{fileName}} 열기",
+    "hostedArtifactDownload": "원본 {{fileName}} 다운로드",
     "openAttachment": "{{name}} 열기",
     "skill": "스킬: {{name}}",
     "askAboutSelection": "이 내용에 대해 질문하기",

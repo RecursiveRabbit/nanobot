@@ -1791,6 +1791,8 @@
     "dataTable": "Tabel data",
     "fileEditPreparing": "Menyiapkan perubahan file…",
     "openLink": "Buka tautan: {{label}}",
+    "hostedArtifactOpen": "Buka {{fileName}} di {{provider}}",
+    "hostedArtifactDownload": "Unduh {{fileName}} mentah",
     "openAttachment": "Buka {{name}}",
     "skill": "Keterampilan: {{name}}",
     "askAboutSelection": "Tanyakan tentang ini",

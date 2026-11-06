@@ -1813,6 +1813,8 @@
     "dataTable": "Tabela de dados",
     "fileEditPreparing": "Preparando a edição do arquivo…",
     "openLink": "Abrir link: {{label}}",
+    "hostedArtifactOpen": "Abrir {{fileName}} em {{provider}}",
+    "hostedArtifactDownload": "Baixar {{fileName}} bruto",
     "openAttachment": "Abrir {{name}}",
     "skill": "Habilidade: {{name}}",
     "automationSourceFallback": "Automação",
