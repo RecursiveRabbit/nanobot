@@ -99,21 +99,24 @@ async def test_runner_checkpoint_keeps_current_user_as_replay_boundary(tmp_path:
         session.messages.extend(_tool_round(f"older-{index}"))
     session.add_message("assistant", "older final")
 
-    from nanobot.agent.context_governance import ContextWindowExceededError
-
-    with pytest.raises(ContextWindowExceededError):  # noqa: PT012 — the law's path
-        await loop._process_message(
-            InboundMessage(
-                channel="cli",
-                sender_id="user",
-                chat_id="test",
-                content="new question",
-            )
+    result = await loop._process_message(
+        InboundMessage(
+            channel="cli",
+            sender_id="user",
+            chat_id="test",
+            content="new question",
         )
+    )
 
-    # The law (Evans 2026-09-24): the archive pass cannot fit this session's
-    # full context in one provider call (8k window), so the pass fails and the
-    # pressure path raises — it never fabricates, truncates, or deletes.
+    # The law (Evans 2026-09-24), restated for the pause gate (Evans
+    # 2026-11-07): the archive pass cannot fit this session's full context
+    # in one provider call (8k window), and the strip's consent gate does
+    # not raise through the turn — it pauses with its own words in-channel,
+    # naming the release valve. Nothing is fabricated, truncated, or
+    # deleted either way.
+    assert result is not None
+    assert "Context pause gate" in result.content
+    assert "/strip-again" in result.content
     assert any(message.get("content") == "long older turn" for message in session.messages)
     assert any(message.get("content") == "old" for message in session.messages)
     assert "_last_summary" not in session.metadata

@@ -67,6 +67,11 @@ def _turn_outcome(stop_reason: object) -> tuple[str, str | None]:
         return "failed", "model"
     if stop_reason == "tool_error":
         return "failed", "tool"
+    if stop_reason == "consent_required":
+        # The strip pause gate: the turn ended without doing the work, by
+        # design, awaiting the user's /strip-again. Failed, but by consent,
+        # not by model or tool.
+        return "failed", "consent"
     return "completed", None
 
 

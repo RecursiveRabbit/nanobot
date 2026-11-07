@@ -128,6 +128,36 @@ def test_clear_refuses_without_proven_backup(tmp_path):
     assert goodnight.is_armed(s)  # still armed; the word may be said later
 
 
+def test_clear_resets_strip_ledger_for_the_new_episode(tmp_path):
+    """Evans 2026-11-07: one strip per session EPISODE, not per lifetime.
+    A successful goodnight fold closes the episode; the ledger's count,
+    grants, and pending flag reset, and the next pressure trip strips
+    without asking."""
+    from nanobot.agent.context_governance import CONTEXT_STRIP_METADATA_KEY
+
+    path = tmp_path / "session.jsonl"
+    s = _real_session(path)
+    s.metadata[CONTEXT_STRIP_METADATA_KEY] = {
+        "count": 1,
+        "consent_grants": 0,
+        "consent_pending": True,
+        "last_preservation": "session.jsonl.pre-strip-20261106.bak",
+    }
+    goodnight.arm_if_fold_delivery(s, "daily-compaction")
+    mgr = FakeManager(path)
+
+    assert goodnight.clear_for_goodnight(mgr, s)
+
+    meta = s.metadata[CONTEXT_STRIP_METADATA_KEY]
+    assert meta["count"] == 0
+    assert meta["consent_grants"] == 0
+    assert meta["consent_pending"] is False
+    assert meta["lifetime_strips"] == 1
+    assert meta["last_reset_reason"] == "goodnight-fold"
+    # The audit door: the preservation reference survives the reset.
+    assert meta["last_preservation"] == "session.jsonl.pre-strip-20261106.bak"
+
+
 def test_baton_text_never_parsed(tmp_path):
     (tmp_path / "batons").mkdir()
     (tmp_path / "batons" / "nime_baton.json").write_text('{"mood": "test",}')

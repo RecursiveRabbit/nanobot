@@ -19,6 +19,7 @@ from nanobot.agent.context_governance import (
     ContextGovernanceConfig,
     ContextGovernor,
     ContextStripHandler,
+    ContextWindowExceededError,
     ModelRequestState,
     ProviderCompactionConsolidator,
     TranscriptBuilder,
@@ -431,14 +432,36 @@ class AgentRunner:
                 if request_state.compaction is not None
                 else messages
             )
-            response, raw_usage = await self._request_model(
-                spec,
-                request_messages,
-                hook,
-                context,
-                request_state=request_state,
-                transcript=messages,
-            )
+            try:
+                response, raw_usage = await self._request_model(
+                    spec,
+                    request_messages,
+                    hook,
+                    context,
+                    request_state=request_state,
+                    transcript=messages,
+                )
+            except ContextWindowExceededError as exc:
+                if exc.user_notice is None:
+                    raise
+                # The strip pause gate (Evans 2026-11-07): the session used
+                # its episode's strip budget, the shears found nothing to
+                # cut, or the backup could not be proven. The turn ends with
+                # the gate's own words delivered in-channel — never the
+                # opaque "compaction failed" — and the message names the
+                # release valve (/strip-again) or the way through (/compact).
+                # Pause and notify; no retry, no storm, nothing stripped.
+                final_content = exc.user_notice
+                stop_reason = "consent_required"
+                error = str(exc)
+                failure_error_kind = "context_strip_consent"
+                logger.warning(
+                    "Context pause gate for {}: {}",
+                    spec.session_key or "default",
+                    exc.source,
+                )
+                self._append_final_message(messages, final_content)
+                break
             assert request_state.messages is not None
             messages_for_model = request_state.messages
             conversation_state.observe_response(response, messages)

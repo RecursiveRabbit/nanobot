@@ -202,6 +202,69 @@ class TurnContext:
         return self.session
 
 
+def _strip_record_line(error_file: str | None) -> str:
+    return (
+        f"Record: `{error_file}`"
+        if error_file
+        else "Record: the gateway log (no workspace errors/ door was available)."
+    )
+
+
+def _strip_consent_notice(
+    *,
+    count: int,
+    grants: int,
+    error_file: str | None,
+) -> str:
+    """The pause gate's words for the consent trip (Evans 2026-11-07).
+
+    The user always gets the reason and the release valve in-channel; the
+    notification IS the point — a tripped gate means the session is being
+    loaded too heavily, and that is a process signal, not just an error.
+    """
+    return (
+        "⏸ **Context pause gate.**\n\n"
+        "This turn crossed the model's context window, and this session "
+        f"already used its one automatic tool-result strip since the last "
+        f"fold ({count} strip(s), {grants} consent grant(s)). I paused "
+        "here rather than strip again without asking.\n\n"
+        "To push the strip through manually: send `/strip-again`, then "
+        "resend your message — the turn will strip old tool results and "
+        "continue. Nothing was changed and nothing was lost; the full "
+        "record stays on disk.\n\n"
+        "Worth knowing: this gate tripping means the session is carrying "
+        "too much. If it keeps happening, the answer is to rethink the "
+        "load, not just to keep pushing through.\n\n"
+        + _strip_record_line(error_file)
+    )
+
+
+def _strip_exhausted_notice(*, error_file: str | None) -> str:
+    """The pause gate's words when there is nothing left to strip."""
+    return (
+        "⏸ **Context pause gate.**\n\n"
+        "This turn crossed the model's context window and the strip found "
+        "nothing left to cut — the overflow lives in conversation prose, "
+        "not tool output, so the shears cannot help here.\n\n"
+        "The ways through: `/compact` folds this session into a summary "
+        "checkpoint and continues; `/new` archives and starts fresh. "
+        "Nothing was changed.\n\n"
+        + _strip_record_line(error_file)
+    )
+
+
+def _strip_preservation_notice(*, error_file: str | None) -> str:
+    """The pause gate's words when the pre-strip backup cannot be proven."""
+    return (
+        "⏸ **Context pause gate.**\n\n"
+        "The strip was refused: the byte-verified backup of the session "
+        "file could not be written first — no sibling, no strip. The "
+        "session is untouched. This is a storage problem, not a context "
+        "one; the record has the details.\n\n"
+        + _strip_record_line(error_file)
+    )
+
+
 class AgentLoop:
     """
     The agent loop is the core processing engine.
@@ -791,12 +854,14 @@ class AgentLoop:
         re-runs on the stripped file. The mutation is durable — the file is
         the truth and the model reads its own scar tissue.
 
-        The single-run law: one strip per session without consent. A second
+        The single-run law (per episode, Evans 2026-11-07): one strip per
+        session since the last successful fold without consent. A second
         trip means the agent is doing something we didn't intend — the
         handler refuses, flags consent_pending in the session metadata,
-        drops the raw record in the errors/ door, and the turn fails
-        clearly. `/strip-again` (user) or an operator grant (nime) releases
-        exactly one more strip.
+        drops the raw record in the errors/ door, and the turn pauses with
+        the gate's own words in-channel (never the opaque failure).
+        `/strip-again` (user) or an operator grant (nime) releases exactly
+        one more strip.
         """
         async with self.consolidator.get_lock(session.key):
             meta = dict(session.metadata.get(CONTEXT_STRIP_METADATA_KEY) or {})
@@ -817,9 +882,10 @@ class AgentLoop:
                     body=(
                         "Context pressure tripped again after "
                         f"{count} strip(s) with {grants} consent grant(s).\n"
-                        "The single-run law (Evans 2026-10-10) allows one "
-                        "automatic strip per session; a second requires user "
-                        "consent (/strip-again) or an operator grant.\n"
+                        "The single-run law (Evans 2026-10-10, per-episode "
+                        "from 2026-11-07) allows one automatic strip per "
+                        "session episode; a second requires user consent "
+                        "(/strip-again) or an operator grant.\n"
                         "The session is paused at this turn; rescue is a "
                         "reviewed event."
                     ),
@@ -833,6 +899,9 @@ class AgentLoop:
                     status="consent_required",
                     reason="strip-consent-required",
                     error_file=error_file,
+                    user_notice=_strip_consent_notice(
+                        count=count, grants=grants, error_file=error_file,
+                    ),
                 )
             targets = [
                 message
@@ -862,6 +931,7 @@ class AgentLoop:
                     status="consent_required",
                     reason="strip-exhausted",
                     error_file=error_file,
+                    user_notice=_strip_exhausted_notice(error_file=error_file),
                 )
             # The desk's boundary (2026-10-11, adopted verbatim): BEFORE any
             # mutation, a verified full-fidelity sibling of the session file
@@ -876,30 +946,34 @@ class AgentLoop:
                     "Context strip for {} could not flush the session; refusing",
                     session.key,
                 )
+                error_file = write_harness_error(
+                    workspace,
+                    kind="context-strip-preservation-failed",
+                    session_key=session.key,
+                    body="The session file could not be flushed before strip.",
+                )
                 return ContextStripOutcome(
                     status="refused",
                     reason="preservation-unavailable",
-                    error_file=write_harness_error(
-                        workspace,
-                        kind="context-strip-preservation-failed",
-                        session_key=session.key,
-                        body="The session file could not be flushed before strip.",
-                    ),
+                    error_file=error_file,
+                    user_notice=_strip_preservation_notice(error_file=error_file),
                 )
             sibling = write_preservation_sibling(session_path, tag="pre-strip")
             if sibling is None:
+                error_file = write_harness_error(
+                    workspace,
+                    kind="context-strip-preservation-failed",
+                    session_key=session.key,
+                    body=(
+                        "The pre-strip full-fidelity sibling could not be "
+                        "written and verified; the strip was refused."
+                    ),
+                )
                 return ContextStripOutcome(
                     status="refused",
                     reason="preservation-unavailable",
-                    error_file=write_harness_error(
-                        workspace,
-                        kind="context-strip-preservation-failed",
-                        session_key=session.key,
-                        body=(
-                            "The pre-strip full-fidelity sibling could not be "
-                            "written and verified; the strip was refused."
-                        ),
-                    ),
+                    error_file=error_file,
+                    user_notice=_strip_preservation_notice(error_file=error_file),
                 )
             stripped = 0
             for message in targets:

@@ -367,6 +367,65 @@ async def test_runner_pauses_when_strip_consent_required(monkeypatch):
     assert compaction_events[0].error_file == "./errors/error_20261010-172139.txt"
 
 
+async def test_runner_delivers_pause_gate_notice(monkeypatch):
+    """Evans 2026-11-07: when the strip handler supplies the gate's words,
+    the runner converts the exception into a delivered pause message — the
+    user hears the reason and the release valve, never the opaque failure.
+    """
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_stream_with_retry = AsyncMock()
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    monkeypatch.setattr(
+        "nanobot.agent.context_governance.estimate_prompt_tokens_chain",
+        lambda *_args, **_kwargs: (600, "test-counter"),
+    )
+    notice = (
+        "⏸ Context pause gate. Send /strip-again, then resend your message."
+    )
+    strip = AsyncMock(return_value=ContextStripOutcome(
+        status="consent_required",
+        reason="strip-consent-required",
+        error_file="./errors/error_20261107-010840.txt",
+        user_notice=notice,
+    ))
+    compaction_events: list[ContextCompactionEvent] = []
+
+    async def observe_compaction(event: ContextCompactionEvent) -> None:
+        compaction_events.append(event)
+
+    result = await AgentRunner().run(make_run_spec(
+        provider,
+        initial_messages=None,
+        transcript_input=TranscriptInput(
+            history=[{"role": "user", "content": "old question"}],
+            current_message="continue",
+        ),
+        transcript_builder=_build_transcript,
+        context_strip=strip,
+        tools=tools,
+        model="test-model",
+        context_window_tokens=1_624,
+        max_tokens=100,
+        max_iterations=1,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        events=EventSink(observe_compaction),
+    ))
+
+    strip.assert_awaited_once()
+    # No model call happened; the pause is the answer.
+    provider.chat_stream_with_retry.assert_not_awaited()
+    assert result.stop_reason == "consent_required"
+    assert result.failure_error_kind == "context_strip_consent"
+    assert result.final_content == notice
+    # The notice persists as the turn's assistant message — the model reads
+    # its own scar tissue on the next turn, gate text included.
+    assert result.messages[-1] == {"role": "assistant", "content": notice}
+    # The audit event still fires with the errors/ pointer.
+    assert [event.phase for event in compaction_events] == ["failed"]
+    assert compaction_events[0].reason == "strip-consent-required"
+
+
 async def test_runner_strips_at_most_once_without_consent(monkeypatch):
     """Pressure surviving a strip (the overflow lives in prose) triggers the
     handler's second call, which the single-run law answers with refusal."""

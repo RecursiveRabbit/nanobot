@@ -518,6 +518,46 @@ class TestCompactIdleSession:
         assert reloaded.updated_at == old_ts
 
     @pytest.mark.asyncio
+    async def test_successful_compact_resets_strip_ledger(
+        self, real_consolidator, mock_provider, runtime
+    ):
+        """Evans 2026-11-07: the strip budget is one automatic strip per
+        session EPISODE — a committed fold closes the episode, so the next
+        pressure trip strips without asking. The lifetime tally and the
+        preservation reference survive for audit."""
+        from nanobot.agent.context_governance import CONTEXT_STRIP_METADATA_KEY
+
+        mock_provider.chat_stream_with_retry.return_value = MagicMock(
+            content="Summary of old conversation.", finish_reason="stop"
+        )
+        sessions = real_consolidator.sessions
+        session = sessions.get_or_create("cli:strip-ledger")
+        session.metadata[CONTEXT_STRIP_METADATA_KEY] = {
+            "count": 1,
+            "consent_grants": 0,
+            "consent_pending": True,
+            "last_preservation": "session.jsonl.pre-strip-20261106.bak",
+        }
+        session.add_message("user", "hello")
+        session.add_message("assistant", "work happened")
+        sessions.save(session)
+
+        result = await real_consolidator.compact_idle_session(
+            "cli:strip-ledger", runtime=runtime
+        )
+
+        assert result == "Summary of old conversation."
+        sessions.invalidate("cli:strip-ledger")
+        reloaded = sessions.get_or_create("cli:strip-ledger")
+        meta = reloaded.metadata[CONTEXT_STRIP_METADATA_KEY]
+        assert meta["count"] == 0
+        assert meta["consent_grants"] == 0
+        assert meta["consent_pending"] is False
+        assert meta["lifetime_strips"] == 1
+        assert meta["last_reset_reason"] == "compact-fold"
+        assert meta["last_preservation"] == "session.jsonl.pre-strip-20261106.bak"
+
+    @pytest.mark.asyncio
     async def test_archive_constructs_visible_alternation_for_validating_provider(
         self, real_consolidator, mock_provider, runtime
     ):

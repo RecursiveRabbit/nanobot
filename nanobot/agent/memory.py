@@ -1043,6 +1043,13 @@ class Consolidator:
                     )
                     # Resume from the summary and retained transcript, not the old provider history.
                     session.provider_state = None
+                    # Evans 2026-11-07: the strip budget is per session
+                    # episode; a committed fold closes the episode and the
+                    # ledger resets. (Local import: context_governance ->
+                    # agent.context -> memory.)
+                    from nanobot.agent.context_governance import reset_strip_ledger
+
+                    reset_strip_ledger(session.metadata, reason="compact-fold")
                     self.sessions.save(session)
             except (Exception, asyncio.CancelledError) as exc:
                 if backup_bytes is not None:

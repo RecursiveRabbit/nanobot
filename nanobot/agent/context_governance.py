@@ -12,6 +12,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import uuid4
@@ -64,6 +65,53 @@ CONTEXT_STRIP_PLACEHOLDER = "[context exceeded, tool call result stripped.]"
 CONTEXT_STRIP_METADATA_KEY = "_context_strip"
 
 
+def reset_strip_ledger(metadata: dict[str, Any], *, reason: str) -> bool:
+    """Reset the strip ledger when a successful fold closes the episode.
+
+    Evans 2026-11-07: the single-run law's budget is one automatic strip
+    per session EPISODE, not per session lifetime — "twice in one day, not
+    twice ever." A successful fold (the goodnight clear or a committed
+    compact checkpoint) is the episode boundary: the ledger's count,
+    grants, and pending flag reset, so the next pressure trip strips
+    without asking. The preservation reference and a lifetime strip count
+    stay for audit — the file answers every question about BOTH clocks.
+
+    Returns True when the ledger changed. A session with no ledger, or a
+    ledger already at zero, is left untouched — no scar, no entry.
+    """
+    raw = metadata.get(CONTEXT_STRIP_METADATA_KEY)
+    if not isinstance(raw, dict):
+        return False
+
+    def _count(value: Any) -> int:
+        return (
+            value
+            if isinstance(value, int) and not isinstance(value, bool)
+            else 0
+        )
+
+    count = _count(raw.get("count"))
+    grants = _count(raw.get("consent_grants"))
+    if not count and not grants and raw.get("consent_pending") is not True:
+        return False
+    meta = dict(raw)
+    meta.update(
+        count=0,
+        consent_grants=0,
+        consent_pending=False,
+        lifetime_strips=_count(raw.get("lifetime_strips")) + count,
+        last_reset_at=datetime.now().isoformat(),
+        last_reset_reason=reason,
+    )
+    metadata[CONTEXT_STRIP_METADATA_KEY] = meta
+    logger.info(
+        "Strip ledger reset on {} ({} episode strip(s) folded into lifetime)",
+        reason,
+        count,
+    )
+    return True
+
+
 @dataclass(frozen=True, slots=True)
 class ContextStripOutcome:
     """The result of one strip attempt against the persisted session."""
@@ -72,6 +120,11 @@ class ContextStripOutcome:
     history: list[dict[str, Any]] | None = None
     reason: str | None = None
     error_file: str | None = None
+    # The pause gate's own words (Evans 2026-11-07): when the strip cannot
+    # run, the user hears WHY in-channel plus the release valve, never the
+    # opaque "compaction failed". Composed by the session-side handler,
+    # which owns the law; None keeps the legacy raise-and-fail path.
+    user_notice: str | None = None
 
 
 ContextStripHandler = Callable[[], Awaitable[ContextStripOutcome]]
@@ -99,11 +152,16 @@ class ContextWindowExceededError(RuntimeError):
         estimated_tokens: int,
         input_budget: int,
         source: str,
+        user_notice: str | None = None,
     ) -> None:
         self.session_key = session_key
         self.estimated_tokens = estimated_tokens
         self.input_budget = input_budget
         self.source = source
+        # When the strip handler supplies the pause gate's text, the runner
+        # converts this exception into a delivered pause message instead of
+        # the generic turn failure (Evans 2026-11-07).
+        self.user_notice = user_notice
         super().__init__(
             "Model input still exceeds the local context budget after request fitting "
             f"for {session_key or 'default'}: {estimated_tokens}/{input_budget} via {source}"
@@ -628,6 +686,7 @@ class ContextGovernor:
                     estimated_tokens=measured,
                     input_budget=self.input_budget(state.config),
                     source=f"context strip ({outcome.reason or 'unavailable'})",
+                    user_notice=outcome.user_notice,
                 )
             new_input = replace(compaction.transcript_input, history=outcome.history)
             new_raw = compaction.transcript_builder(new_input)

@@ -36,6 +36,8 @@ from typing import Any, Mapping
 
 from loguru import logger
 
+from nanobot.agent.context_governance import reset_strip_ledger
+
 FOLD_SENDER_ID = "daily-compaction"
 FOLD_ARMED_KEY = "_fold_armed"
 LAST_GOODNIGHT_KEY = "_last_goodnight"
@@ -122,6 +124,10 @@ def clear_for_goodnight(session_manager: Any, session: Any) -> bool:
     session.metadata.pop(FOLD_ARMED_KEY, None)
     session.metadata[LAST_GOODNIGHT_KEY] = datetime.now().isoformat()
     session.clear()
+    # Evans 2026-11-07: the strip budget is one automatic strip per session
+    # EPISODE, not per lifetime — a successful fold closes the episode and
+    # the ledger resets (twice in one day, not twice ever).
+    reset_strip_ledger(session.metadata, reason="goodnight-fold")
     session_manager.save(session)
     logger.info(
         "Goodnight fold closed for {} — record preserved at {}",
