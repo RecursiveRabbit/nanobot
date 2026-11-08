@@ -59,6 +59,7 @@ import {
   saveSecret,
 } from "@/lib/bootstrap";
 import { displayTitle, sortSessions } from "@/lib/chat-groups";
+import { loadProfileClientId } from "@/lib/identity";
 import { deriveTitle } from "@/lib/format";
 import { NanobotClient } from "@/lib/nanobot-client";
 import { ClientProvider, useClient } from "@/providers/ClientProvider";
@@ -822,7 +823,7 @@ export default function App() {
   const refreshReadyClient = useCallback(
     async (client: NanobotClient, fallbackSurface: RuntimeSurface) => {
       const boot = await fetchBootstrap("", bootstrapSecretRef.current);
-      const url = deriveWsUrl(boot.ws_path, boot.token, boot.ws_url);
+      const url = deriveWsUrl(boot.ws_path, boot.token, boot.ws_url, loadProfileClientId());
       const runtimeSurface = resolveRuntimeSurface(boot.runtime_surface, fallbackSurface);
       const runtimeHost = createRuntimeHost(runtimeSurface, boot.runtime_capabilities);
       const tokenExpiresAt = boot.expires_in
@@ -860,7 +861,7 @@ export default function App() {
           const boot = await fetchBootstrap("", secret);
           if (cancelled) return;
           if (secret) saveSecret(secret);
-          const url = deriveWsUrl(boot.ws_path, boot.token, boot.ws_url);
+          const url = deriveWsUrl(boot.ws_path, boot.token, boot.ws_url, loadProfileClientId());
           const runtimeSurface = resolveRuntimeSurface(boot.runtime_surface, "browser");
           const runtimeHost = createRuntimeHost(runtimeSurface, boot.runtime_capabilities);
           const client = new NanobotClient({

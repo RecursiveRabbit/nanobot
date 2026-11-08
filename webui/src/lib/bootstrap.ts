@@ -104,8 +104,12 @@ export function deriveWsUrl(
   wsPath: string,
   token: string | null | undefined,
   wsUrl?: string | null,
+  clientId?: string | null,
 ): string {
-  const query = token ? `?token=${encodeURIComponent(token)}` : "";
+  const params: string[] = [];
+  if (token) params.push(`token=${encodeURIComponent(token)}`);
+  if (clientId) params.push(`client_id=${encodeURIComponent(clientId)}`);
+  const query = params.join("&");
   const path = wsPath && wsPath.startsWith("/") ? wsPath : `/${wsPath || ""}`;
   if (typeof window !== "undefined" && window.location.port === "5173") {
     const host = window.location.hostname.includes(":")
@@ -119,17 +123,17 @@ export function deriveWsUrl(
       port = upstream.port;
     }
     const authority = port ? `${host}:${port}` : host;
-    return `${scheme}://${authority}${path}${query}`;
+    return `${scheme}://${authority}${path}${query ? `?${query}` : ""}`;
   }
   if (wsUrl && /^(wss?|nanobot-host):\/\//i.test(wsUrl)) {
-    if (!token) return wsUrl;
+    if (!query) return wsUrl;
     const join = wsUrl.includes("?") ? "&" : "?";
-    return `${wsUrl}${join}token=${encodeURIComponent(token)}`;
+    return `${wsUrl}${join}${query}`;
   }
   if (typeof window === "undefined") {
-    return `ws://127.0.0.1:8765${path}${query}`;
+    return `ws://127.0.0.1:8765${path}${query ? `?${query}` : ""}`;
   }
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
   const host = window.location.host;
-  return `${scheme}://${host}${path}${query}`;
+  return `${scheme}://${host}${path}${query ? `?${query}` : ""}`;
 }

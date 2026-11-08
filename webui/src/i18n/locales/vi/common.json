@@ -419,7 +419,8 @@
       "mcp": "MCP",
       "apps": "Ứng dụng",
       "automations": "Tự động hóa",
-      "skills": "Kỹ năng"
+      "skills": "Kỹ năng",
+      "identity": "Danh tính"
     },
     "sections": {
       "interface": "Giao diện",
@@ -1377,6 +1378,22 @@
       "selectProvider": "Chọn nhà cung cấp",
       "configureProvider": "Cấu hình nhà cung cấp",
       "languageAuto": "Tự động"
+    },
+    "identity": {
+      "title": "Danh tính",
+      "anonymous": "Ẩn danh",
+      "description": "Tên hiển thị gắn với các tin nhắn mới từ hồ sơ WebUI này, trong luồng được phục vụ và trong phong bì mà tác tử nhìn thấy. Chỉ là xác nhận nguồn — không phải đăng nhập, không phải quyền hạn. Tin nhắn cũ không bao giờ bị viết lại.",
+      "label": "Tên hiển thị",
+      "placeholder": "ví dụ: Evans",
+      "hint": "Để trống để ẩn danh một cách rõ ràng. Xoá và thay đổi chỉ áp dụng cho tin nhắn mới.",
+      "save": "Lưu danh tính",
+      "clear": "Xoá",
+      "noticeSaved": "Đã lưu danh tính. Tin nhắn mới từ hồ sơ này sẽ hiển thị tên này.",
+      "noticeCleared": "Đã xoá danh tính. Tin nhắn từ hồ sơ này lại ẩn danh.",
+      "unavailable": "Danh tính cần một hồ sơ WebUI lâu dài. Hãy kết nối lại một lần rồi thử lại.",
+      "currentState": "Hiện tại: {{state}}",
+      "stateNamed": "tin nhắn từ hồ sơ này hiển thị là “{{name}}”",
+      "stateAnonymous": "tin nhắn từ hồ sơ này hiển thị là ẩn danh"
     }
   },
   "chat": {

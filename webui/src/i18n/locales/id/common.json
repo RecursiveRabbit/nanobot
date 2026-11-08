@@ -419,7 +419,8 @@
       "mcp": "MCP",
       "apps": "Aplikasi",
       "automations": "Otomasi",
-      "skills": "Keterampilan"
+      "skills": "Keterampilan",
+      "identity": "Identitas"
     },
     "sections": {
       "interface": "Antarmuka",
@@ -1377,6 +1378,22 @@
       "selectProvider": "Pilih penyedia",
       "configureProvider": "Konfigurasi penyedia",
       "languageAuto": "Otomatis"
+    },
+    "identity": {
+      "title": "Identitas",
+      "anonymous": "Anonim",
+      "description": "Nama tampilan yang melekat pada pesan baru dari profil WebUI ini, di thread yang dilayani dan di amplop yang terlihat oleh agen. Hanya atribusi — bukan login, bukan izin. Pesan lama tidak pernah ditulis ulang.",
+      "label": "Nama tampilan",
+      "placeholder": "mis. Evans",
+      "hint": "Kosongkan untuk tetap anonim secara eksplisit. Menghapus dan mengubah hanya berlaku untuk pesan baru.",
+      "save": "Simpan identitas",
+      "clear": "Hapus",
+      "noticeSaved": "Identitas tersimpan. Pesan baru dari profil ini akan menampilkan nama ini.",
+      "noticeCleared": "Identitas dihapus. Pesan dari profil ini kembali anonim.",
+      "unavailable": "Identitas memerlukan profil WebUI yang persisten. Sambungkan ulang sekali lalu coba lagi.",
+      "currentState": "Saat ini: {{state}}",
+      "stateNamed": "pesan dari profil ini tampil sebagai “{{name}}”",
+      "stateAnonymous": "pesan dari profil ini tampil sebagai anonim"
     }
   },
   "chat": {

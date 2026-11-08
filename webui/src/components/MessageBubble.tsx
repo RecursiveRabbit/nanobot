@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { copyTextToClipboard } from "@/lib/clipboard";
+import { originatorLabel } from "@/lib/identity";
 import {
   fmtDateTime,
   formatMessageEndTime,
@@ -378,6 +379,16 @@ export function MessageBubble({
     const showCreatedAt = createdAtLabel.length > 0;
     const createdAtTitle = showCreatedAt ? fmtDateTime(message.createdAt) : "";
     const quotedContext = parsedMessage.quotedContext;
+    // Verified speaker identity, server-attached. Anonymous stays explicit;
+    // rows without the field predate attribution and carry no label.
+    const originatorText = message.originator
+      ? (
+        originatorLabel(message.originator)
+        ?? (message.originator.kind === "anonymous"
+          ? t("settings.identity.anonymous")
+          : null)
+      )
+      : null;
     const slashCommand = matchingSlashCommand(userContent, slashCommands);
     const messageText = slashCommand ? (
       <>
@@ -399,6 +410,14 @@ export function MessageBubble({
     );
     return (
       <div className="group ml-auto flex max-w-[min(85%,36rem)] flex-col items-end gap-1.5">
+        {originatorText ? (
+          <span
+            data-user-originator
+            className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/80"
+          >
+            {originatorText}
+          </span>
+        ) : null}
         {hasImages ? <UserImages images={images} align="right" /> : null}
         {!hasImages && hasMedia ? (
           <MessageMedia media={media} align="right" />

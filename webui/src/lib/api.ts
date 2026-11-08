@@ -360,6 +360,33 @@ export async function updateStringOverride(
   });
 }
 
+export interface WebUIIdentityPayload {
+  client_id: string;
+  display_name: string;
+}
+
+/** Read the server-persisted display name for this WebUI profile. */
+export async function fetchIdentity(
+  transport: WebUIMutationTransport,
+  clientId: string,
+): Promise<WebUIIdentityPayload> {
+  return mutation<WebUIIdentityPayload>(transport, "identity.read", {
+    client_id: clientId,
+  });
+}
+
+/** Persist (or, with "", clear) the display name for this WebUI profile. */
+export async function updateIdentity(
+  transport: WebUIMutationTransport,
+  clientId: string,
+  displayName: string,
+): Promise<WebUIIdentityPayload> {
+  return mutation<WebUIIdentityPayload>(transport, "identity.update", {
+    client_id: clientId,
+    display_name: displayName,
+  });
+}
+
 export async function fetchFilePreview(
   token: string,
   key: string,

@@ -419,7 +419,8 @@
       "mcp": "MCP",
       "apps": "Applications",
       "automations": "Automatisations",
-      "skills": "Compétences"
+      "skills": "Compétences",
+      "identity": "Identité"
     },
     "sections": {
       "interface": "Interface utilisateur",
@@ -1377,6 +1378,22 @@
       "selectProvider": "Choisir un fournisseur",
       "configureProvider": "Configurer le fournisseur",
       "languageAuto": "Automatique"
+    },
+    "identity": {
+      "title": "Identité",
+      "anonymous": "Anonyme",
+      "description": "Nom d’affichage attaché aux nouveaux messages de ce profil WebUI, dans le fil servi et dans l’enveloppe visible par l’agent. Attribution uniquement — ni connexion, ni permission. Les messages historiques ne sont jamais réécrits.",
+      "label": "Nom d’affichage",
+      "placeholder": "p. ex., Evans",
+      "hint": "Laissez vide pour rester explicitement anonyme. Les effacements et modifications ne s’appliquent qu’aux nouveaux messages.",
+      "save": "Enregistrer l’identité",
+      "clear": "Effacer",
+      "noticeSaved": "Identité enregistrée. Les nouveaux messages de ce profil afficheront ce nom.",
+      "noticeCleared": "Identité effacée. Les messages de ce profil sont de nouveau anonymes.",
+      "unavailable": "L’identité nécessite un profil WebUI persistant. Reconnectez-vous une fois puis réessayez.",
+      "currentState": "Actuel : {{state}}",
+      "stateNamed": "les messages de ce profil s’affichent comme « {{name}} »",
+      "stateAnonymous": "les messages de ce profil s’affichent comme anonymes"
     }
   },
   "chat": {

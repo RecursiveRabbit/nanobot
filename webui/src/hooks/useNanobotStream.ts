@@ -2,6 +2,7 @@ import { acceptsCompactionPhase } from "../../../packages/client-events/notifica
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useThreadVisibility } from "@/hooks/useThreadVisibility";
+import { loadCachedOriginator } from "@/lib/identity";
 
 import { useClient } from "@/providers/ClientProvider";
 import { toMediaAttachment } from "@/lib/media";
@@ -793,7 +794,16 @@ export function useNanobotStream(
         setMessages((prev) => {
           if (ev.turn_id && prev.some((message) => (
             message.role === "user" && message.turnId === ev.turn_id
-          ))) return prev;
+          ))) {
+            // Local echo already shows this row; adopt the server's verified
+            // originator (authoritative over the optimistic cache).
+            if (ev.originator === undefined) return prev;
+            return prev.map((message) => (
+              message.role === "user" && message.turnId === ev.turn_id
+                ? { ...message, originator: ev.originator }
+                : message
+            ));
+          }
           return [
             ...prev,
             {
@@ -808,6 +818,7 @@ export function useNanobotStream(
                 && Number.isFinite(ev.created_at_ms)
                 ? ev.created_at_ms
                 : Date.now(),
+              originator: ev.originator ?? { kind: "anonymous" },
               ...(ev.media_urls?.length ? { media: ev.media_urls } : {}),
               ...(ev.cli_apps?.length ? { cliApps: ev.cli_apps } : {}),
               ...(ev.mcp_presets?.length ? { mcpPresets: ev.mcp_presets } : {}),
@@ -1364,6 +1375,7 @@ export function useNanobotStream(
             turnSeq: 0,
             deliveryStatus: "sending",
             createdAt: Date.now(),
+            originator: loadCachedOriginator(),
             ...(previews ? { media: previews } : {}),
             ...(options?.cliApps?.length ? { cliApps: options.cliApps } : {}),
             ...(options?.mcpPresets?.length ? { mcpPresets: options.mcpPresets } : {}),

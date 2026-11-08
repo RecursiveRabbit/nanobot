@@ -419,7 +419,8 @@
       "apps": "Apps",
       "automations": "Automations",
       "skills": "Skills",
-      "memory": "Memory"
+      "memory": "Memory",
+      "identity": "Identity"
     },
     "sections": {
       "interface": "Interface",
@@ -1377,6 +1378,22 @@
       "selectProvider": "Select provider",
       "configureProvider": "Configure provider",
       "languageAuto": "Auto"
+    },
+    "identity": {
+      "title": "Identity",
+      "anonymous": "Anonymous",
+      "description": "Display name attached to new messages from this WebUI profile, in the served thread and in the agent-visible envelope. Attribution only — not a login, never a permission. Historical messages are never rewritten.",
+      "label": "Display name",
+      "placeholder": "e.g. Evans",
+      "hint": "Leave empty to stay explicitly anonymous. Clears and changes apply to new messages only.",
+      "save": "Save identity",
+      "clear": "Clear",
+      "noticeSaved": "Identity saved. New messages from this profile will show this name.",
+      "noticeCleared": "Identity cleared. Messages from this profile are anonymous again.",
+      "unavailable": "Identity needs a persistent WebUI profile. Reconnect once and try again.",
+      "currentState": "Current: {{state}}",
+      "stateNamed": "messages from this profile show as “{{name}}”",
+      "stateAnonymous": "messages from this profile show as anonymous"
     }
   },
   "chat": {

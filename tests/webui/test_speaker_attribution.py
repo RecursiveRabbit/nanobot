@@ -355,6 +355,33 @@ def test_transcript_event_without_originator_stays_unstamped() -> None:
     assert "originator" not in event
 
 
+def test_thread_replay_projects_originator_to_ui_messages() -> None:
+    from nanobot.webui.transcript import replay_transcript_to_ui_messages
+
+    lines = [
+        {
+            "event": "user",
+            "chat_id": "chat-9",
+            "text": "Evans here",
+            "originator": {
+                "kind": "human",
+                "label": "Evans",
+                "attestation": ATTESTATION_OPERATOR_PROFILE,
+            },
+        },
+        {"event": "user", "chat_id": "chat-9", "text": "older row"},
+    ]
+    messages = replay_transcript_to_ui_messages(lines)
+    user_rows = [m for m in messages if m.get("role") == "user"]
+    assert user_rows[0]["originator"] == {
+        "kind": "human",
+        "label": "Evans",
+        "attestation": ATTESTATION_OPERATOR_PROFILE,
+    }
+    # Rows that predate attribution stay unlabeled rather than guessed.
+    assert "originator" not in user_rows[1]
+
+
 # ---------------------------------------------------------------------------
 # Interleaved Evans / Pore in one session (acceptance 1–3, unit level)
 # ---------------------------------------------------------------------------

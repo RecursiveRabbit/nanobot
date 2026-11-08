@@ -40,6 +40,7 @@ import { RUNTIME_CONFIG_FIELDS, type RuntimeConfigPage } from "@/components/sett
 import { RuntimeConfigSettings } from "@/components/settings/system/RuntimeConfigSettings";
 import { RuntimeSettings } from "@/components/settings/system/RuntimeSettings";
 import { StringsSettings } from "@/components/settings/StringsSettings";
+import { IdentitySettings } from "@/components/settings/IdentitySettings";
 import type { SettingsController } from "@/components/settings/useSettingsController";
 import type { SkillSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -581,6 +582,8 @@ export function SettingsPage({
         return <SkillsCatalogSettings skills={skills} />;
       case "strings":
         return <StringsSettings />;
+      case "identity":
+        return <IdentitySettings />;
       case "runtime":
         return (
           <div className="settings-stack">

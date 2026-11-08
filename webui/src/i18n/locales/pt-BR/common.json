@@ -419,7 +419,8 @@
       "memory": "Memória",
       "apps": "Aplicativos",
       "automations": "Automações",
-      "skills": "Habilidades"
+      "skills": "Habilidades",
+      "identity": "Identidade"
     },
     "sections": {
       "interface": "Interface do usuário",
@@ -1377,6 +1378,22 @@
       "selectProvider": "Selecionar provedor",
       "configureProvider": "Configurar provedor",
       "languageAuto": "Automático"
+    },
+    "identity": {
+      "title": "Identidade",
+      "anonymous": "Anônimo",
+      "description": "Nome de exibição anexado às novas mensagens deste perfil da WebUI, na conversa servida e no envelope visível ao agente. Apenas atribuição — não é login nem permissão. Mensagens antigas nunca são reescritas.",
+      "label": "Nome de exibição",
+      "placeholder": "ex.: Evans",
+      "hint": "Deixe vazio para permanecer explicitamente anônimo. Limpar e alterar só vale para novas mensagens.",
+      "save": "Salvar identidade",
+      "clear": "Limpar",
+      "noticeSaved": "Identidade salva. As novas mensagens deste perfil mostrarão este nome.",
+      "noticeCleared": "Identidade limpa. As mensagens deste perfil voltam a ser anônimas.",
+      "unavailable": "A identidade precisa de um perfil WebUI persistente. Reconecte uma vez e tente novamente.",
+      "currentState": "Atual: {{state}}",
+      "stateNamed": "as mensagens deste perfil aparecem como “{{name}}”",
+      "stateAnonymous": "as mensagens deste perfil aparecem como anônimas"
     }
   },
   "chat": {

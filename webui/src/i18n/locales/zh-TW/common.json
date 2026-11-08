@@ -419,7 +419,8 @@
       "mcp": "MCP",
       "apps": "應用程式",
       "automations": "自動任務",
-      "skills": "技能"
+      "skills": "技能",
+      "identity": "身分識別"
     },
     "sections": {
       "interface": "介面",
@@ -1377,6 +1378,22 @@
       "selectProvider": "選擇供應商",
       "configureProvider": "設定供應商",
       "languageAuto": "自動"
+    },
+    "identity": {
+      "title": "身分識別",
+      "anonymous": "匿名",
+      "description": "附加到此 WebUI 設定檔新訊息的顯示名稱，同時出現在服務串流與代理可見的訊息信封中。僅用於歸屬標示——不是登入，也不是權限。歷史訊息不會被改寫。",
+      "label": "顯示名稱",
+      "placeholder": "例如：Evans",
+      "hint": "留空則保持明確匿名。清除與變更僅適用於新訊息。",
+      "save": "儲存身分識別",
+      "clear": "清除",
+      "noticeSaved": "身分識別已儲存。此設定檔的新訊息將顯示該名稱。",
+      "noticeCleared": "身分識別已清除。此設定檔的訊息將恢復為匿名顯示。",
+      "unavailable": "身分識別需要持久的 WebUI 設定檔。請重新連線一次後重試。",
+      "currentState": "目前：{{state}}",
+      "stateNamed": "此設定檔的訊息顯示為「{{name}}」",
+      "stateAnonymous": "此設定檔的訊息顯示為匿名"
     }
   },
   "chat": {

@@ -419,7 +419,8 @@
       "mcp": "MCP",
       "apps": "アプリ",
       "automations": "自動タスク",
-      "skills": "スキル"
+      "skills": "スキル",
+      "identity": "Identity"
     },
     "sections": {
       "interface": "インターフェース",
@@ -1377,6 +1378,22 @@
       "selectProvider": "プロバイダーを選択",
       "configureProvider": "プロバイダーを設定",
       "languageAuto": "自動"
+    },
+    "identity": {
+      "title": "Identity（本人確認表示）",
+      "anonymous": "匿名",
+      "description": "この WebUI プロファイルからの新規メッセージに付く表示名です（配信スレッドとエージェント側のエンベロープの両方）。権限ではなく認証でもありません。過去のメッセージは書き換わりません。",
+      "label": "表示名",
+      "placeholder": "例: Evans",
+      "hint": "空欄のままにすると明示的に匿名のままになります。変更・クリアは新規メッセージにのみ適用されます。",
+      "save": "Identity を保存",
+      "clear": "クリア",
+      "noticeSaved": "Identity を保存しました。このプロファイルの新規メッセージにこの名前が表示されます。",
+      "noticeCleared": "Identity をクリアしました。このプロファイルのメッセージは再び匿名表示になります。",
+      "unavailable": "Identity は永続的な WebUI プロファイルが必要です。一度再接続してから再試行してください。",
+      "currentState": "現在: {{state}}",
+      "stateNamed": "このプロファイルのメッセージは「{{name}}」として表示されます",
+      "stateAnonymous": "このプロファイルのメッセージは匿名で表示されます"
     }
   },
   "chat": {

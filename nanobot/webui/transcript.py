@@ -2210,6 +2210,11 @@ def replay_transcript_to_ui_messages(
                 **_turn_fields(rec, "user"),
                 "createdAt": _created_at_ms(rec, idx),
             }
+            # Verified speaker identity stamped at ingress; rows without the
+            # field predate attribution and render without a label.
+            originator_raw = rec.get("originator")
+            if originator_raw is not None:
+                row["originator"] = originator_from_dict(originator_raw).to_dict()
             if media_att:
                 row["media"] = media_att
                 if all(m.get("kind") == "image" for m in media_att):

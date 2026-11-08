@@ -123,6 +123,9 @@ export interface UIMessage {
   source?: UIMessageSource;
   /** Structured provenance for a message delivered by another session. */
   sessionMessage?: UISessionMessage;
+  /** Verified speaker identity for user turns (server-attached; anonymous
+   * stays explicit). Absent on history that predates attribution. */
+  originator?: UIMessageOriginator;
   /** Stable protocol metadata for grouping all activity emitted by one user turn. */
   turnId?: string;
   turnPhase?: UITurnPhase;
@@ -1323,8 +1326,22 @@ interface InboundTurnMetadata {
   turn_seq?: number;
 }
 
+/** Verified speaker identity attached at the server/harness seam. */
+export interface UIMessageOriginator {
+  kind: "anonymous" | "human" | "resident" | "system";
+  label?: string;
+  attestation?: string;
+  handle?: string;
+  session_key?: string;
+}
+
 export type InboundEvent =
-  | { event: "ready"; chat_id: string; client_id: string }
+  | {
+      event: "ready";
+      chat_id: string;
+      client_id: string;
+      originator?: UIMessageOriginator;
+    }
   | {
       event: "attached";
       chat_id: string;
@@ -1354,6 +1371,7 @@ export type InboundEvent =
       mcp_presets?: UIMcpPresetAttachment[];
       session_mentions?: SessionMention[];
       provenance?: { session_message?: UISessionMessage };
+      originator?: UIMessageOriginator;
     }
   | ({
       event: "message";

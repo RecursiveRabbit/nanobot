@@ -2,6 +2,7 @@ import { useRef } from "react";
 import {
   Activity,
   Info,
+  BadgeCheck,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -34,6 +35,7 @@ import { cn } from "@/lib/utils";
 
 const SETTINGS_NAV_ITEMS: Array<{ key: SettingsSectionKey; icon: LucideIcon; fallback: string }> = [
   { key: "overview", icon: Activity, fallback: "Overview" },
+  { key: "identity", icon: BadgeCheck, fallback: "Identity" },
   { key: "appearance", icon: Palette, fallback: "Appearance" },
   { key: "models", icon: SlidersHorizontal, fallback: "Models" },
   { key: "strings", icon: Type, fallback: "Context strings" },

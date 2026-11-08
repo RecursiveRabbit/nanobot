@@ -1,4 +1,5 @@
 import { decodeNotification } from "../../../packages/client-events/notifications";
+import { cacheProfileOriginator, saveProfileClientId } from "@/lib/identity";
 import type {
   ConnectionStatus,
   InboundEvent,
@@ -1159,6 +1160,11 @@ export class NanobotClient {
     if (parsed.event === "ready") {
       this.readyChatId = parsed.chat_id;
       this.knownChats.add(parsed.chat_id);
+      // The server-issued client id is this WebUI profile's stable key: keep
+      // presenting it on reconnects so the server-side identity setting
+      // (Settings → Identity) keeps applying.
+      saveProfileClientId(parsed.client_id);
+      cacheProfileOriginator(parsed.originator ?? null);
       return;
     }
 

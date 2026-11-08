@@ -8,6 +8,7 @@ export type SettingsSectionKey =
   | "appearance"
   | "models"
   | "strings"
+  | "identity"
   | "capabilities"
   | "image"
   | "voice"

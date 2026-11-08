@@ -419,7 +419,8 @@
       "mcp": "MCP",
       "apps": "앱",
       "automations": "자동화",
-      "skills": "스킬"
+      "skills": "스킬",
+      "identity": "Identity"
     },
     "sections": {
       "interface": "인터페이스",
@@ -1377,6 +1378,22 @@
       "selectProvider": "제공업체 선택",
       "configureProvider": "제공업체 설정",
       "languageAuto": "자동"
+    },
+    "identity": {
+      "title": "Identity(신원 표시)",
+      "anonymous": "익명",
+      "description": "이 WebUI 프로필의 새 메시지에 붙는 표시 이름입니다(서빙된 스레드와 에이전트에게 보이는 envelope 모두). 권한 부여가 아니며 로그인도 아닙니다. 과거 메시지는 다시 쓰이지 않습니다.",
+      "label": "표시 이름",
+      "placeholder": "예: Evans",
+      "hint": "비워 두면 명시적으로 익명 상태를 유지합니다. 삭제와 변경은 새 메시지에만 적용됩니다.",
+      "save": "Identity 저장",
+      "clear": "지우기",
+      "noticeSaved": "Identity를 저장했습니다. 이 프로필의 새 메시지에 이 이름이 표시됩니다.",
+      "noticeCleared": "Identity를 지웠습니다. 이 프로필의 메시지는 다시 익명으로 표시됩니다.",
+      "unavailable": "Identity는 지속적인 WebUI 프로필이 필요합니다. 한 번 다시 연결한 후 다시 시도하세요.",
+      "currentState": "현재: {{state}}",
+      "stateNamed": "이 프로필의 메시지는 “{{name}}”으로 표시됩니다",
+      "stateAnonymous": "이 프로필의 메시지는 익명으로 표시됩니다"
     }
   },
   "chat": {
