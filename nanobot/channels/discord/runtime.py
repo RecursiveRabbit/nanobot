@@ -258,6 +258,23 @@ if DISCORD_AVAILABLE:
                     error,
                 )
 
+        def _resolve_outbound_chat_id(self, chat_id: str) -> str:
+            """Resolve numeric ids and the unified `main` alias without a crash."""
+            if chat_id.isdigit():
+                return chat_id
+            channel = self._known_channels.get(chat_id)
+            if channel is not None:
+                return str(channel.id)
+            # Unified Discord sessions use the non-numeric `main` label. Use the
+            # most recent real inbound channel rather than int('main').
+            last = getattr(self, "_last_inbound_channel_id", None)
+            if last:
+                return last
+            raise RuntimeError(
+                f"Discord target {chat_id!r} has no cached route; no inbound "
+                "message has established the unified session's numeric channel"
+            )
+
         async def send_outbound(self, msg: OutboundMessage) -> None:
             """Send a nanobot outbound message using Discord transport rules."""
             compaction = msg.event if isinstance(msg.event, ContextCompactionEvent) else None
@@ -272,7 +289,7 @@ if DISCORD_AVAILABLE:
                 if notice is not None and await self._edit_compaction_notice(notice, msg.content or ""):
                     return
 
-            channel_id = int(msg.chat_id)
+            channel_id = int(self._resolve_outbound_chat_id(msg.chat_id))
             channel = self._channel._known_channels.get(msg.chat_id) or self.get_channel(channel_id)
             fetch_error: Exception | None = None
             if channel is None:
@@ -627,6 +644,7 @@ class DiscordChannel(BaseChannel):
 
         sender_id = str(message.author.id)
         channel_id = self._channel_key(message.channel)
+        self._last_inbound_channel_id = channel_id
         self._remember_channel(message.channel)
         content = message.content or ""
 
@@ -697,7 +715,7 @@ class DiscordChannel(BaseChannel):
         channel = self._known_channels.get(chat_id)
         if channel is not None:
             return channel
-        channel_id = int(chat_id)
+        channel_id = int(self._resolve_outbound_chat_id(chat_id))
         channel = client.get_channel(channel_id)
         if channel is not None:
             return channel
