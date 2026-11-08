@@ -153,6 +153,21 @@ def test_identity_store_bounds_and_corruption(tmp_path: Path) -> None:
 
 
 def _ws_channel(tmp_path: Path, bus: Any, **cfg_overrides: Any) -> WebSocketChannel:
+    # Keep every dispatch-side effect inside the test tmp dir: the transcript
+    # recorder otherwise writes to the live webui directory (a real run of
+    # this test minted phantom "Evans here" chats in the operator's UI).
+    import nanobot.config.paths as paths
+    monkey_webui = tmp_path / "webui"
+    monkey_webui.mkdir(exist_ok=True)
+    original = paths.get_webui_dir
+    paths.get_webui_dir = lambda: monkey_webui
+    try:
+        return _ws_channel_inner(tmp_path, bus, **cfg_overrides)
+    finally:
+        paths.get_webui_dir = original
+
+
+def _ws_channel_inner(tmp_path: Path, bus: Any, **cfg_overrides: Any) -> WebSocketChannel:
     cfg: dict[str, Any] = {
         "enabled": True,
         "allowFrom": ["*"],
