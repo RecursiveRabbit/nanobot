@@ -25,6 +25,11 @@ from nanobot.bus.events import (
     OUTBOUND_META_AGENT_UI,
     OutboundMessage,
 )
+from nanobot.bus.origin import (
+    ATTESTATION_OPERATOR_PROFILE,
+    ATTESTATION_PROXY_ASSERTION,
+    MessageOriginator,
+)
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import Base
@@ -43,6 +48,8 @@ from nanobot.webui.http_utils import (
 from nanobot.webui.http_utils import (
     query_first as _query_first,
 )
+from nanobot.webui.http_utils import trusted_proxy_assertion
+from nanobot.webui.identity_store import WebUIIdentityStore
 from nanobot.webui.inbound_commands import WebUICommandRouter
 from nanobot.webui.metadata import (
     WEBSOCKET_TURN_OWNER_METADATA_KEY,
@@ -385,6 +392,10 @@ class WebSocketChannel(BaseChannel):
         self._conn_default: dict[ServerConnection, str] = {}
         # Connections authenticated with a one-time token from /webui/bootstrap.
         self._webui_connections = gateway.endpoint.webui_connections
+        # Server-persisted WebUI profile display names (Settings → Identity).
+        self._identity_store = WebUIIdentityStore()
+        # connection -> verified originator resolved at connection setup.
+        self._connection_originator: dict[ServerConnection, MessageOriginator] = {}
         self._stop_event: asyncio.Event | None = None
         self._server_task: asyncio.Task[None] | None = None
         self._server: Server | None = None
@@ -458,6 +469,7 @@ class WebSocketChannel(BaseChannel):
         is_dm: bool,
         session_key: str | None,
         require_existing_session: bool,
+        originator: MessageOriginator | None = None,
     ) -> None:
         await self._handle_message(
             sender_id=sender_id,
@@ -468,7 +480,43 @@ class WebSocketChannel(BaseChannel):
             is_dm=is_dm,
             session_key=session_key,
             require_existing_session=require_existing_session,
+            originator=originator or MessageOriginator.ANONYMOUS,
         )
+
+    def originator_for_connection(self, connection: ServerConnection) -> MessageOriginator:
+        """Return the verified originator stamped on this connection, if any."""
+        return self._connection_originator.get(connection) or MessageOriginator.ANONYMOUS
+
+    def _resolve_connection_originator(
+        self,
+        connection: ServerConnection,
+        client_id: str,
+    ) -> MessageOriginator:
+        """Attach the verified speaker identity for one WebUI connection.
+
+        Precedence: a trusted-proxy authentication assertion (strongest
+        attestation) over the server-persisted profile display name for this
+        client id. Anything else — including a client-chosen ``client_id``
+        with no server-side record — stays explicitly anonymous.
+        """
+        request = connection.request
+        headers = getattr(request, "headers", None)
+        if headers is not None:
+            assertion = trusted_proxy_assertion(connection, headers, self.config)
+            if assertion:
+                return MessageOriginator(
+                    kind="human",
+                    label=assertion,
+                    attestation=ATTESTATION_PROXY_ASSERTION,
+                )
+        name = self._identity_store.display_name_for(client_id)
+        if name:
+            return MessageOriginator(
+                kind="human",
+                label=name,
+                attestation=ATTESTATION_OPERATOR_PROFILE,
+            )
+        return MessageOriginator.ANONYMOUS
 
     def _attach(self, connection: ServerConnection, chat_id: str) -> None:
         """Idempotently subscribe *connection* to *chat_id*."""
@@ -516,6 +564,7 @@ class WebSocketChannel(BaseChannel):
         try:
             await self._commands.cleanup_connection(connection)
         finally:
+            self._connection_originator.pop(connection, None)
             for chat_id in tuple(self._conn_chats.get(connection, ())):
                 self._detach(connection, chat_id)
             self._conn_default.pop(connection, None)
@@ -805,6 +854,8 @@ class WebSocketChannel(BaseChannel):
             client_id = client_id[:128]
 
         default_chat_id = str(uuid.uuid4())
+        originator = self._resolve_connection_originator(connection, client_id)
+        self._connection_originator[connection] = originator
 
         try:
             await connection.send(
@@ -813,6 +864,7 @@ class WebSocketChannel(BaseChannel):
                         "event": "ready",
                         "chat_id": default_chat_id,
                         "client_id": client_id,
+                        "originator": originator.to_dict(),
                         **({"terminal": {
                             "protocolVersion": 1, "gatewayId": self.gateway.tokens.instance_id,
                         }} if _query_first(query, "terminal_protocol") == "1" else {}),
@@ -850,6 +902,7 @@ class WebSocketChannel(BaseChannel):
                     content=content,
                     metadata={"remote": getattr(connection, "remote_address", None)},
                     is_dm=False,
+                    originator=self._connection_originator.get(connection),
                 )
         except Exception as e:
             self.logger.debug("connection ended: {}", e)

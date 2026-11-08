@@ -16,12 +16,19 @@ from loguru import logger
 from websockets.asyncio.server import ServerConnection
 
 from nanobot.bus.events import INBOUND_META_USER_SHELL
+from nanobot.bus.origin import (
+    ORIGINATOR_CONTEXT_SOURCE,
+    MessageOriginator,
+    originator_runtime_context_line,
+)
 from nanobot.command.builtin import USER_SHELL_COMMAND, builtin_command_starts_agent_turn
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_INPUT_META,
     WEBUI_QUOTE_METADATA,
     RuntimeContextBlock,
+    runtime_context_blocks_from_metadata,
     webui_quote_runtime_context,
+    wrap_runtime_context_lines,
 )
 from nanobot.security.workspace_access import (
     WORKSPACE_SCOPE_METADATA_KEY,
@@ -225,6 +232,7 @@ class WebUICommandRouter:
         cli_apps: list[dict[str, Any]],
         mcp_presets: list[dict[str, Any]],
         session_mentions: list[SessionMention],
+        originator: MessageOriginator | None = None,
     ) -> None:
         body: dict[str, Any] = {
             "event": "user_message",
@@ -234,6 +242,8 @@ class WebUICommandRouter:
         }
         if turn_id is not None:
             body["turn_id"] = turn_id
+        if originator is not None:
+            body["originator"] = originator.to_dict()
         media = self._media.augment_transcript_user_media(media_paths)
         for attachment, name in zip(media, media_names, strict=False):
             if name:
@@ -641,6 +651,7 @@ class WebUICommandRouter:
                 metadata[WEBSOCKET_TURN_OWNER_METADATA_KEY] = queued_owner
 
         accepted = False
+        originator = self._transport.originator_for_connection(connection)
         try:
             if is_webui and (
                 temporary_policy is None or temporary_policy.persist_transcript
@@ -653,7 +664,19 @@ class WebUICommandRouter:
                     cli_apps=cli_apps or None,
                     mcp_presets=mcp_presets or None,
                     session_mentions=session_mentions or None,
+                    originator=originator,
                 )
+            origin_line = originator_runtime_context_line(originator)
+            if origin_line is not None:
+                # Server-attested speaker identity, visible to the model without
+                # reading prose. Anonymous carries no block by design.
+                metadata[RUNTIME_CONTEXT_INPUT_META] = [
+                    *runtime_context_blocks_from_metadata(metadata),
+                    RuntimeContextBlock(
+                        source=ORIGINATOR_CONTEXT_SOURCE,
+                        content=wrap_runtime_context_lines([origin_line]),
+                    ),
+                ]
             if trusted_webui:
                 context_blocks: list[RuntimeContextBlock] = []
                 quote = webui_quote_runtime_context(
@@ -665,7 +688,10 @@ class WebUICommandRouter:
                 if session_context is not None:
                     context_blocks.append(session_context)
                 if context_blocks:
-                    metadata[RUNTIME_CONTEXT_INPUT_META] = context_blocks
+                    metadata[RUNTIME_CONTEXT_INPUT_META] = [
+                        *runtime_context_blocks_from_metadata(metadata),
+                        *context_blocks,
+                    ]
             await self._transport.webui_dispatch_message(
                 sender_id=client_id,
                 chat_id=chat_id,
@@ -681,6 +707,7 @@ class WebUICommandRouter:
                     if temporary_policy is not None
                     else False
                 ),
+                originator=originator,
             )
             self._workspaces.persist_scope(chat_id, scope)
             accepted = True
@@ -700,6 +727,7 @@ class WebUICommandRouter:
                 cli_apps=cli_apps,
                 mcp_presets=mcp_presets,
                 session_mentions=session_mentions,
+                originator=originator,
             )
         if is_webui and turn_id:
             active_turn_id = websocket_turn_id(chat_id)

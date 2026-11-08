@@ -17,6 +17,7 @@ from urllib.parse import unquote, urlparse
 
 from loguru import logger
 
+from nanobot.bus.origin import MessageOriginator, originator_from_dict
 from nanobot.config.paths import get_webui_dir
 from nanobot.runtime_context import public_history_message
 from nanobot.session.automation_turns import is_automation_kind
@@ -825,6 +826,7 @@ class WebUITranscriptRecorder:
         cli_apps: list[dict[str, Any]] | None = None,
         mcp_presets: list[dict[str, Any]] | None = None,
         session_mentions: Sequence[Mapping[str, Any]] | None = None,
+        originator: MessageOriginator | None = None,
     ) -> bool:
         if text.strip() == "/stop" and not media_paths:
             return False
@@ -835,6 +837,7 @@ class WebUITranscriptRecorder:
             cli_apps=cli_apps,
             mcp_presets=mcp_presets,
             session_mentions=session_mentions,
+            originator=originator,
         )
         if payload is None:
             return False
@@ -1067,6 +1070,7 @@ def build_user_transcript_event(
     cli_apps: list[Any] | None = None,
     mcp_presets: list[Any] | None = None,
     session_mentions: Sequence[Any] | None = None,
+    originator: MessageOriginator | None = None,
 ) -> dict[str, Any] | None:
     paths = [str(path) for path in (media_paths or []) if path]
     if not text and not paths:
@@ -1076,6 +1080,9 @@ def build_user_transcript_event(
         "chat_id": chat_id,
         "text": text,
     }
+    if originator is not None:
+        # Explicitly anonymous is stamped too, so the served thread can say so.
+        event["originator"] = originator.to_dict()
     if paths:
         event["media_paths"] = paths
     apps = [
@@ -1137,6 +1144,11 @@ def _session_user_event(
         mcp_presets=cast(list[Any], mcp_presets) if isinstance(mcp_presets, list) else None,
         session_mentions=(
             cast(list[Any], session_mentions) if isinstance(session_mentions, list) else None
+        ),
+        originator=(
+            originator_from_dict(raw_originator)
+            if (raw_originator := message.get("originator")) is not None
+            else None
         ),
     )
 

@@ -819,6 +819,10 @@ class AgentLoop:
                     for k, v in dict(msg.metadata).items()
                     if k != RUNTIME_CONTEXT_INPUT_META
                 }
+            # Stamp the verified originator at ingress. The persisted record
+            # is the truth for history replay and the served thread; it is
+            # never rewritten retroactively when the profile setting changes.
+            extra["originator"] = msg.originator.to_dict()
             session.add_message("user", text, **extra)
             self._mark_pending_user_turn(session)
             followup_id = msg.metadata.get(PENDING_FOLLOWUP_ID_KEY)

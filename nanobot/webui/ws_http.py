@@ -41,6 +41,11 @@ from nanobot.webui.file_preview import (
     file_preview_payload,
 )
 from nanobot.webui.gateway_tokens import GatewayTokenStore, token_response_payload
+from nanobot.webui.identity_store import (
+    WebUIIdentityStore,
+    normalize_client_id,
+    normalize_display_name,
+)
 from nanobot.webui.http_utils import (
     accepts_gzip as _accepts_gzip,
 )
@@ -155,6 +160,8 @@ _WEBUI_MUTATION_PATHS = {
     "workspace.pick_folder": "/api/workspaces/pick-folder",
     "recovery.continue": "/api/webui/recovery/continue",
     "recovery.dismiss": "/api/webui/recovery/dismiss",
+    "identity.read": "/api/webui/identity/read",
+    "identity.update": "/api/webui/identity/update",
     "settings.agent.update": "/api/settings/update",
     "strings.update": "/api/strings/update",
     "settings.model_configuration.create": "/api/settings/model-configurations/create",
@@ -350,6 +357,8 @@ class GatewayHTTPHandler:
         self.ingress = ingress
         self.workspaces = workspaces
         self.settings = settings
+        # Server-persisted WebUI profile display names (Settings → Identity).
+        self.identity = WebUIIdentityStore()
         self.mcp_runtime_status = mcp_runtime_status
         self.skills_workspace_path = skills_workspace_path
         self.disabled_skills: set[str] = (
@@ -471,7 +480,12 @@ class GatewayHTTPHandler:
             return True
         if re.match(r"^/api/webui/automations/(enable|disable|delete|run|update)$", path):
             return True
-        if path in {"/api/webui/recovery/continue", "/api/webui/recovery/dismiss"}:
+        if path in {
+            "/api/webui/recovery/continue",
+            "/api/webui/recovery/dismiss",
+            "/api/webui/identity/read",
+            "/api/webui/identity/update",
+        }:
             return True
         if path == "/api/strings/update":
             return True
@@ -524,6 +538,10 @@ class GatewayHTTPHandler:
             return self._handle_bootstrap(connection, request)
         if got == "/webui/terminal":
             return self._handle_bootstrap(connection, request, terminal_probe=True)
+
+        # WebUI profile identity (Settings → Identity)
+        if got in {"/api/webui/identity/read", "/api/webui/identity/update"}:
+            return self._handle_identity(got, request)
 
         # Settings routes (delegated)
         response = await self.settings_routes.dispatch(connection, request, got)
@@ -585,6 +603,33 @@ class GatewayHTTPHandler:
         )
 
     # -- Token issue --------------------------------------------------------
+
+    def _handle_identity(self, got: str, request: WsRequest) -> Response:
+        """Read or update one WebUI profile's display name.
+
+        Only reachable through an authenticated WebSocket mutation (plain HTTP
+        mutation paths are refused at the dispatch gate), so the caller is an
+        already-authenticated WebUI profile.
+        """
+        payload = _mutation_payload(request)
+        if payload is None:
+            return _http_error(405, "identity changes require an authenticated WebSocket")
+        client_id = normalize_client_id(payload.get("client_id"))
+        if client_id is None:
+            return _http_error(400, "invalid client_id")
+        if got == "/api/webui/identity/read":
+            return _http_json_response({
+                "client_id": client_id,
+                "display_name": self.identity.display_name_for(client_id),
+            })
+        display_name = payload.get("display_name")
+        if display_name is not None and not isinstance(display_name, str):
+            return _http_error(400, "invalid display_name")
+        normalized = self.identity.set_display_name(client_id, display_name or "")
+        return _http_json_response({
+            "client_id": client_id,
+            "display_name": normalized,
+        })
 
     def _handle_token_issue(self, connection: Any, request: Any) -> Any:
         secret = self.config.token_issue_secret.strip() or self.config.token.strip()

@@ -372,6 +372,8 @@ async def test_same_session_projects_one_turn_to_both_clients(bus: MagicMock) ->
                     "turn_id": "turn-a",
                     "active_turn_id": "turn-a",
                     "started_at": projected.raw["started_at"],
+                    # Unattributed connections stay explicitly anonymous.
+                    "originator": {"kind": "anonymous"},
                 }
 
                 await ch.send_delta(chat_id, "shared reply", stream_id="stream-a")

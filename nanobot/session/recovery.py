@@ -39,6 +39,7 @@ from uuid import uuid4
 from loguru import logger
 
 from nanobot.bus.events import InboundMessage
+from nanobot.bus.origin import originator_from_dict
 from nanobot.bus.outbound_events import (
     RecoveryStateEvent,
     SessionUpdatedEvent,
@@ -114,6 +115,9 @@ def record_pending_followup(session: Session, message: InboundMessage) -> str | 
             "content": message.content,
             "media": list(message.media or []),
             "metadata": metadata,
+            # The recovery journal is the source of truth across restarts and
+            # folds: the verified originator must survive it too.
+            "originator": message.originator.to_dict(),
         }
     )
     # This journal is the recovery source of truth, not a mirror of the
@@ -163,6 +167,7 @@ def pending_followups(session: Session) -> list[InboundMessage]:
                 metadata={**cast(dict[str, Any], metadata), PENDING_FOLLOWUP_ID_KEY: followup_id},
                 session_key_override=session.key,
                 require_existing_session=True,
+                originator=originator_from_dict(record.get("originator")),
             )
         )
     return messages

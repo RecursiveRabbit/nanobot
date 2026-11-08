@@ -197,23 +197,40 @@ def _address_matches_network(
     return mapped is not None and mapped in network
 
 
+def trusted_proxy_assertion(
+    connection: Any,
+    headers: Any,
+    config: Any,
+) -> str | None:
+    """Return the asserted identity value for a configured trusted proxy peer.
+
+    The peer address must match the allowlisted CIDRs and the configured
+    assertion header must be present and non-empty; the header VALUE is the
+    verified human identity. Returns None when no valid assertion exists.
+    """
+    trusted_proxy_auth = getattr(config, "trusted_proxy_auth", None)
+    if trusted_proxy_auth is None:
+        return None
+    address = _connection_ip(connection)
+    if address is None:
+        return None
+    networks = getattr(trusted_proxy_auth, "_trusted_peer_networks", ())
+    if not any(_address_matches_network(address, network) for network in networks):
+        return None
+    assertion_header = getattr(trusted_proxy_auth, "assertion_header", "")
+    value = case_insensitive_header(headers, assertion_header)
+    if not value:
+        return None
+    return str(value).strip() or None
+
+
 def is_trusted_proxy_authenticated_request(
     connection: Any,
     headers: Any,
     config: Any,
 ) -> bool:
     """Return True when a configured proxy peer presents a non-empty assertion."""
-    trusted_proxy_auth = getattr(config, "trusted_proxy_auth", None)
-    if trusted_proxy_auth is None:
-        return False
-    address = _connection_ip(connection)
-    if address is None:
-        return False
-    networks = getattr(trusted_proxy_auth, "_trusted_peer_networks", ())
-    if not any(_address_matches_network(address, network) for network in networks):
-        return False
-    assertion_header = getattr(trusted_proxy_auth, "assertion_header", "")
-    return bool(case_insensitive_header(headers, assertion_header))
+    return trusted_proxy_assertion(connection, headers, config) is not None
 
 
 def _host_without_port(value: str) -> str:

@@ -4822,6 +4822,7 @@ async def test_user_messages_fan_out_to_other_clients_on_the_same_chat(
         "turn_id": "turn-a",
         "active_turn_id": "turn-a",
         "started_at": pytest.approx(wth.websocket_turn_wall_started_at("shared-chat")),
+        "originator": {"kind": "anonymous"},
     }
     assert peer_payloads[1] == {
         "event": "user_message",
@@ -4831,6 +4832,7 @@ async def test_user_messages_fan_out_to_other_clients_on_the_same_chat(
         "turn_id": "steer-a",
         "active_turn_id": "turn-a",
         "started_at": pytest.approx(wth.websocket_turn_wall_started_at("shared-chat")),
+        "originator": {"kind": "anonymous"},
     }
     origin_payloads = _sent_ws_payloads(origin)
     assert [

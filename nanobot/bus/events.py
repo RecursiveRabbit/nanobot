@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
+from nanobot.bus.origin import MessageOriginator
+
 if TYPE_CHECKING:
     from nanobot.events import AgentEvent
 
@@ -36,6 +38,10 @@ class InboundMessage:
     session_key_override: str | None = None  # Optional override for thread-scoped sessions
     require_existing_session: bool = False
     input_role: Literal["user", "system"] | None = None
+    # Verified speaker identity attached at the server/harness seam. Distinct
+    # from sender_id/chat_id (routing coordinates); defaults to anonymous and
+    # is never inferred from prose or model-authored arguments.
+    originator: MessageOriginator = field(default_factory=MessageOriginator)
 
     @property
     def session_key(self) -> str:

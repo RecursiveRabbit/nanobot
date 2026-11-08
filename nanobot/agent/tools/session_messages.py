@@ -39,6 +39,11 @@ from nanobot.agent.tools.schema import (
     tool_parameters_schema,
 )
 from nanobot.bus.events import InboundMessage
+from nanobot.bus.origin import (
+    ATTESTATION_HARNESS,
+    ATTESTATION_RESIDENT_HANDLE,
+    MessageOriginator,
+)
 from nanobot.bus.queue import MessageBus
 from nanobot.runtime_context import RuntimeContextBlock
 from nanobot.session.manager import SessionManager
@@ -281,6 +286,13 @@ class SendSessionMessageTool(Tool):
                 metadata={SESSION_MESSAGE_METADATA_KEY: envelope},
                 session_key_override=target.session_key,
                 input_role="user",
+                originator=MessageOriginator(
+                    kind="resident",
+                    label=source.name,
+                    attestation=ATTESTATION_RESIDENT_HANDLE,
+                    handle=source.name,
+                    session_key=source.session_key,
+                ),
             ))
             sent_at.append(now)
             self._sent_at[source.session_key] = sent_at
@@ -380,4 +392,8 @@ class SendSessionMessageTool(Tool):
                 ),
                 session_key_override=source_session_key,
                 input_role="user",
+                originator=MessageOriginator(
+                    kind="system",
+                    attestation=ATTESTATION_HARNESS,
+                ),
             ))
