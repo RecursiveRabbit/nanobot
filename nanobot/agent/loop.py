@@ -1327,6 +1327,12 @@ class AgentLoop:
                     image_paths=image_paths,
                 )
                 row: dict[str, Any] = {"role": "user", "content": user_content}
+                # Stamp the verified originator so the mid-turn persist path
+                # (_persist_turn) records it exactly like the direct path
+                # (_persist_user_message_early). Without this, follow-ups
+                # consumed behind a busy turn lose the structured speaker in
+                # history even though the model saw the origin line.
+                row["originator"] = pending_msg.originator.to_dict()
                 metadata_value = cast(object, pending_msg.metadata)
                 metadata = (
                     pending_msg.metadata

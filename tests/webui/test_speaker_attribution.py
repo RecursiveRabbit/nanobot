@@ -427,6 +427,59 @@ def test_interleaved_evans_and_pore_keep_distinct_originators(tmp_path: Path) ->
 
 
 # ---------------------------------------------------------------------------
+# Mid-turn injection persist path (found live during the 2026-11-08
+# acceptance: follow-ups consumed behind a busy turn lost the structured
+# originator in history even though the model saw the origin line)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_midturn_injected_followup_persists_originator(tmp_path: Path) -> None:
+    from nanobot.agent.runner import AgentRunResult
+    from nanobot.session.recovery import PENDING_FOLLOWUP_ID_KEY
+
+    loop = _make_loop(tmp_path)
+    session = loop.sessions.get_or_create("websocket:chat-9")
+
+    followup = _evans_message()
+    followup.metadata[PENDING_FOLLOWUP_ID_KEY] = "acc-fl-1"
+    record_pending_followup(session, followup)
+    (journal_followup,) = pending_followups(session)
+    assert journal_followup.originator.label == "Evans"
+
+    queue: asyncio.Queue[InboundMessage] = asyncio.Queue()
+    queue.put_nowait(journal_followup)
+
+    async def fake_run(spec):
+        injected = await spec.injection_callback(limit=10)
+        assert injected, "follow-up should be injected mid-turn"
+        initial = loop.context.build_transcript(
+            spec.transcript_input,
+            include_memory=False,
+        )
+        return AgentRunResult(
+            final_content="done",
+            messages=[
+                *initial,
+                *injected,
+                {"role": "assistant", "content": "done"},
+            ],
+            stop_reason="stop",
+        )
+
+    loop.runner.run = fake_run  # type: ignore[method-assign]
+
+    await loop._process_message(_evans_message(), pending_queue=queue)
+
+    users = [m for m in session.messages if m.get("role") == "user"]
+    assert users[-1]["originator"] == {
+        "kind": "human",
+        "label": "Evans",
+        "attestation": ATTESTATION_OPERATOR_PROFILE,
+    }
+
+
+# ---------------------------------------------------------------------------
 # send_session_message attaches the attested resident originator
 # ---------------------------------------------------------------------------
 
