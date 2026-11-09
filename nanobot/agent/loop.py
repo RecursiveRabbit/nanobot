@@ -1593,6 +1593,8 @@ class AgentLoop:
 
                 raw = msg.content.strip()
                 effective_key = self._effective_session_key(msg)
+                if await self._refuse_inert_autonomous_turn(msg, effective_key):
+                    continue
                 if await agent_context.handle_runtime_control(self, msg, self.tools):
                     continue
                 if (
@@ -1695,6 +1697,37 @@ class AgentLoop:
         to safely offer the unfinished turn for explicit continuation later.
         """
         self._preserve_inflight_turns_on_shutdown = True
+
+    async def _refuse_inert_autonomous_turn(self, msg: InboundMessage, session_key: str) -> bool:
+        """Drop scheduled/recurring work for non-activated sessions.
+
+        The inert-session gate (Evans 2026-11-08): cron and automation turns
+        are autonomous work, which inert sessions may not perform. One-shot
+        local-trigger deliveries still flow — the fold path refuses itself
+        gracefully (no arming, no day) — so a refused fold is a normal
+        processed turn, not a silent disappearance.
+        """
+        from nanobot.cron.session_turns import CRON_TRIGGER_META
+        from nanobot.identity.activation import activation_store
+        from nanobot.session.automation_turns import AUTOMATION_HISTORY_META
+
+        if CRON_TRIGGER_META not in msg.metadata and AUTOMATION_HISTORY_META not in msg.metadata:
+            return False
+        gate = activation_store()
+        if not gate.gate_enabled:
+            return False
+        handle_name: str | None = None
+        session = self.sessions.get_cached(session_key)
+        if session is not None:
+            raw = session.metadata.get("session_handle")
+            handle_name = raw if isinstance(raw, str) else None
+        if gate.is_active_for(session_key, "autonomous_work", handle=handle_name):
+            return False
+        logger.info(
+            "Autonomous turn refused for non-activated session {}",
+            session_key,
+        )
+        return True
 
     async def _dispatch(self, msg: InboundMessage) -> None:
         """Process a message: per-session serial, cross-session concurrent."""
@@ -2108,8 +2141,21 @@ class AgentLoop:
         )
         if ctx.kind is TurnKind.USER:
             # The Goodnight fold's sentinel arming (spec: goodnight-fold.md):
-            # the beat's fold turn arms; any other user turn disarms.
-            if goodnight.arm_if_fold_delivery(session, msg.sender_id):
+            # the beat's fold turn arms; any other user turn disarms. The
+            # gate (Evans 2026-11-08) refuses arming for non-activated
+            # sessions: the fold turn still processes, but the sentinel
+            # never arms, so no clear and no baton write ever happens.
+            from nanobot.identity.activation import activation_store
+            gate = activation_store()
+            handle_name = session.metadata.get("session_handle")
+            fold_allowed = gate.is_active_for(
+                session.key,
+                "fold",
+                handle=handle_name if isinstance(handle_name, str) else None,
+            )
+            if goodnight.is_fold_delivery(msg.sender_id) and not fold_allowed:
+                logger.info("Fold refused for non-activated session {}", session.key)
+            elif goodnight.arm_if_fold_delivery(session, msg.sender_id):
                 self.sessions.save(session)
             elif goodnight.disarm_for_user_turn(session, msg.sender_id):
                 self.sessions.save(session)

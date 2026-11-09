@@ -246,6 +246,18 @@ class SendSessionMessageTool(Tool):
         target = await asyncio.to_thread(self._handles.resolve, target_name)
         if target is None:
             raise SessionMessageError(f"session @{target_name} was not found")
+        from nanobot.identity.activation import activation_store
+        gate = activation_store()
+        if gate.gate_enabled and not gate.is_active_for(
+            target.session_key, "resident_messaging", handle=target.name
+        ):
+            # Inert sessions are addressable but not messageable (Evans
+            # 2026-11-08): sending must never activate; refusal leaves the
+            # session exactly as it was.
+            raise SessionMessageError(
+                f"session @{target.name} is not an activated agent; "
+                "resident messaging unlocks only through deliberate onboarding"
+            )
 
         source = await asyncio.to_thread(
             self._handles.handle_for_session,

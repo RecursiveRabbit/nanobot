@@ -114,6 +114,16 @@ async def chain_after_delivery(
         if trigger.sender_id != FOLD_SENDER:
             return
         handle = _label_for(session_manager, key)
+        # The Deal day IS Valley presence: inert sessions get no day, no
+        # face, no autonomous fold ceremony (Evans 2026-11-08 gate).
+        from nanobot.identity.activation import activation_store
+        gate = activation_store()
+        if gate.gate_enabled and not gate.is_active_for(key, "valley", handle=handle):
+            logger.info(
+                "Deal: {} is not an activated agent — fold received, day not opened",
+                handle,
+            )
+            return
         folded = (
             delivery.content.strip() == COMPACT_COMMAND
             or goodnight.is_goodnight(response_text)
