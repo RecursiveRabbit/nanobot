@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
+import os
 import time
 from contextlib import suppress
 from dataclasses import dataclass
@@ -18,7 +20,7 @@ from nanobot.bus.outbound_events import ContextCompactionEvent, ProgressEvent
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.command.builtin import build_help_text
-from nanobot.config.paths import get_media_dir
+from nanobot.config.paths import get_data_dir, get_media_dir
 from nanobot.config.schema import Base
 from nanobot.utils.helpers import safe_filename, split_message
 
@@ -37,6 +39,16 @@ if DISCORD_AVAILABLE:
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024  # 20MB
 MAX_MESSAGE_LEN = 2000  # Discord message character limit
 TYPING_INTERVAL_S = 8
+
+
+def _route_state_path() -> Path:
+    """Where the unified session's last real inbound channel is remembered.
+
+    In-memory routes die with every gateway restart, which left a
+    system-triggered unified delivery no route until a human spoke first
+    (discord:main acceptance probe, 2026-11-09). The durable copy heals that.
+    """
+    return get_data_dir() / "discord-route.json"
 
 
 @dataclass
@@ -470,6 +482,31 @@ class DiscordChannel(BaseChannel):
         self._working_emoji_tasks: dict[str, asyncio.Task[None]] = {}
         self._stream_bufs: dict[str, _StreamBuf] = {}
         self._known_channels: dict[str, Any] = {}
+        self._last_inbound_channel_id: str | None = self._load_persisted_route()
+
+    @staticmethod
+    def _load_persisted_route() -> str | None:
+        """The last real inbound channel from before a restart, if any."""
+        try:
+            raw = json.loads(_route_state_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        value = raw.get("last_inbound_channel_id") if isinstance(raw, dict) else None
+        return value if isinstance(value, str) and value else None
+
+    def _persist_route(self, channel_id: str) -> None:
+        """Remember the last real inbound channel across restarts (atomic)."""
+        path = _route_state_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(
+                json.dumps({"last_inbound_channel_id": channel_id}),
+                encoding="utf-8",
+            )
+            os.replace(tmp, path)
+        except OSError as e:
+            self.logger.warning("could not persist discord route state: {}", e)
 
     def _remember_channel(self, channel: Any) -> None:
         self._known_channels[self._channel_key(channel)] = channel
@@ -728,6 +765,7 @@ class DiscordChannel(BaseChannel):
         sender_id = str(message.author.id)
         channel_id = self._channel_key(message.channel)
         self._last_inbound_channel_id = channel_id
+        self._persist_route(channel_id)
         self._remember_channel(message.channel)
         content = message.content or ""
 
@@ -801,14 +839,21 @@ class DiscordChannel(BaseChannel):
         channel = self._known_channels.get(chat_id)
         if channel is not None:
             return str(channel.id)
-        # Unified Discord sessions use the non-numeric `main` label. Use the
-        # most recent real inbound channel rather than int('main').
+        # Unified Discord sessions use the non-numeric `main` label. Fall
+        # back in order: the most recent real inbound channel (this session,
+        # then the pre-restart durable copy), then the configured guild
+        # channel list — a system-triggered delivery must not fail hard just
+        # because no human has spoken since the restart (discord:main
+        # acceptance probe, 2026-11-09, desk ruling: path (b)).
         last = getattr(self, "_last_inbound_channel_id", None)
         if last:
             return last
+        if self.config.allow_channels:
+            return self.config.allow_channels[0]
         raise RuntimeError(
-            f"Discord target {chat_id!r} has no cached route; no inbound "
-            "message has established the unified session's numeric channel"
+            f"Discord target {chat_id!r} has no cached route and no configured "
+            "guild channel (allowChannels) to fall back to; no inbound message "
+            "has established the unified session's numeric channel"
         )
 
     async def _resolve_channel(self, chat_id: str) -> Any | None:

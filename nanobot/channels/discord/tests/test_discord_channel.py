@@ -23,6 +23,16 @@ from nanobot.channels.discord.runtime import (
 from nanobot.command.builtin import build_help_text
 
 
+@pytest.fixture(autouse=True)
+def _isolate_route_state(tmp_path, monkeypatch):
+    """Route state is runtime data in the shared data dir; these tests must
+    not read (or write) the production copy."""
+    monkeypatch.setattr(
+        "nanobot.channels.discord.runtime._route_state_path",
+        lambda: tmp_path / "discord-route.json",
+    )
+
+
 # Minimal Discord client test double used to control startup/readiness behavior.
 class _FakeDiscordClient:
     instances: list["_FakeDiscordClient"] = []

@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 pytest.importorskip("discord")
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.discord.runtime import DiscordBotClient, DiscordChannel, DiscordConfig
+
+
+@pytest.fixture(autouse=True)
+def _isolate_route_state(tmp_path, monkeypatch):
+    """Route state is runtime data in the shared data dir; tests must not
+    read (or write) the production copy."""
+    monkeypatch.setattr(
+        "nanobot.channels.discord.runtime._route_state_path",
+        lambda: tmp_path / "discord-route.json",
+    )
 
 
 def _client(last: str | None = None) -> DiscordBotClient:
@@ -39,3 +51,45 @@ def test_cached_alias_wins_over_last_channel() -> None:
 def test_unknown_alias_fails_descriptively() -> None:
     with pytest.raises(RuntimeError, match="no cached route"):
         _client()._resolve_outbound_chat_id("main")
+
+
+def test_persisted_route_survives_restart(tmp_path, monkeypatch) -> None:
+    """The durable route copy heals a restart-cold unified session: the
+    last real inbound channel from before the restart resolves `main`
+    without waiting for a human to speak first (desk ruling, path (b))."""
+    route = tmp_path / "discord-route.json"
+    route.write_text(json.dumps({"last_inbound_channel_id": "467239332286300165"}))
+    monkeypatch.setattr(
+        "nanobot.channels.discord.runtime._route_state_path",
+        lambda: route,
+    )
+    assert _client()._resolve_outbound_chat_id("main") == "467239332286300165"
+
+
+def test_configured_guild_channel_is_final_fallback(tmp_path, monkeypatch) -> None:
+    """With no in-memory and no persisted route, `main` falls back to the
+    configured guild channel list (allowChannels)."""
+    monkeypatch.setattr(
+        "nanobot.channels.discord.runtime._route_state_path",
+        lambda: tmp_path / "missing.json",
+    )
+    channel = DiscordChannel(
+        DiscordConfig(enabled=True, allow_from=["*"], allow_channels=["467239332286300165"]),
+        MessageBus(),
+    )
+    client = object.__new__(DiscordBotClient)
+    client._channel = channel
+    assert client._resolve_outbound_chat_id("main") == "467239332286300165"
+
+
+def test_route_state_roundtrips_across_instances(tmp_path, monkeypatch) -> None:
+    """Every inbound refreshes the durable route; a fresh channel instance
+    (post-restart) loads it at construction."""
+    monkeypatch.setattr(
+        "nanobot.channels.discord.runtime._route_state_path",
+        lambda: tmp_path / "route.json",
+    )
+    first = DiscordChannel(DiscordConfig(enabled=True, allow_from=["*"]), MessageBus())
+    first._persist_route("467239332286300165")
+    second = DiscordChannel(DiscordConfig(enabled=True, allow_from=["*"]), MessageBus())
+    assert second._last_inbound_channel_id == "467239332286300165"

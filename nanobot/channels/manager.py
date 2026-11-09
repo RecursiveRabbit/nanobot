@@ -654,16 +654,25 @@ class ChannelManager:
                 return
             await asyncio.sleep(min(poll_s, remaining))
 
-        await self._send_with_retry(
-            target,
-            OutboundMessage(
-                channel=notice.channel,
-                chat_id=notice.chat_id,
-                content=format_restart_completed_message(notice.started_at_raw),
-                metadata=dict(notice.metadata or {}),
-            ),
-            deadline=deadline,
-        )
+        try:
+            await self._send_with_retry(
+                target,
+                OutboundMessage(
+                    channel=notice.channel,
+                    chat_id=notice.chat_id,
+                    content=format_restart_completed_message(notice.started_at_raw),
+                    metadata=dict(notice.metadata or {}),
+                ),
+                deadline=deadline,
+            )
+        except Exception:
+            # Delivery failures now raise (the queue path needs the error);
+            # a restart notice is best-effort and must not die unretrieved.
+            logger.exception(
+                "Restart notice delivery to {}:{} failed",
+                notice.channel,
+                notice.chat_id,
+            )
 
     async def stop_all(self) -> None:
         """Stop all channels and the dispatcher."""
@@ -1013,6 +1022,14 @@ class ChannelManager:
         When deadline is provided, retry until that monotonic time instead of
         stopping at the configured attempt limit.
 
+        Raises the last delivery error when the message could not be
+        delivered — exhaustion and non-retryable failures are surfaced to
+        the caller, never swallowed. A swallowed exhaustion once resolved
+        the delivery future successfully and the message tool reported
+        "Message delivered" for a message that never left (discord:main
+        acceptance probe, 2026-11-09: three failed attempts, one confident
+        lie in the journal).
+
         Note: CancelledError is re-raised to allow graceful shutdown.
         """
         max_attempts = max(self.config.channels.send_max_retries, 1)
@@ -1033,7 +1050,7 @@ class ChannelManager:
                         type(e).__name__,
                         e,
                     )
-                    return
+                    raise
                 loop = asyncio.get_running_loop()
                 exhausted = (
                     attempt >= max_attempts
@@ -1045,7 +1062,7 @@ class ChannelManager:
                         "Failed to send to {} after {} attempts",
                         msg.channel, attempt,
                     )
-                    return
+                    raise
                 delay = _SEND_RETRY_DELAYS[min(attempt - 1, len(_SEND_RETRY_DELAYS) - 1)]
                 if deadline is not None:
                     delay = min(delay, max(0.0, deadline - loop.time()))

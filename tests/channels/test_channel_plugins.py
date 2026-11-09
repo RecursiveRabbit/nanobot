@@ -3014,7 +3014,8 @@ async def test_send_with_retry_retries_on_failure():
 
     # Patch asyncio.sleep to avoid actual delays
     with patch("nanobot.channels.manager.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-        await mgr._send_with_retry(mgr.channels["failing"], msg)
+        with pytest.raises(RuntimeError, match="simulated failure"):
+            await mgr._send_with_retry(mgr.channels["failing"], msg)
 
     assert call_count == 3  # 3 total attempts (initial + 2 retries)
     assert mock_sleep.call_count == 2  # 2 sleeps between retries
@@ -3054,9 +3055,60 @@ async def test_send_with_retry_no_retry_when_max_is_zero():
     msg = OutboundMessage(channel="failing", chat_id="123", content="test")
 
     with patch("nanobot.channels.manager.asyncio.sleep", new_callable=AsyncMock):
-        await mgr._send_with_retry(mgr.channels["failing"], msg)
+        with pytest.raises(RuntimeError, match="simulated failure"):
+            await mgr._send_with_retry(mgr.channels["failing"], msg)
 
     assert call_count == 1  # Called once but no retry (max(0, 1) = 1)
+
+
+@pytest.mark.asyncio
+async def test_queue_outbound_delivery_future_carries_exhaustion():
+    """The acceptance-probe lie, regression-covered: when every attempt
+    fails, the delivery future must resolve with the failure so the message
+    tool reports an error — never 'Message delivered'."""
+
+    class _FailingChannel(BaseChannel):
+        name = "failing"
+        display_name = "Failing"
+
+        async def start(self) -> None:
+            pass
+
+        async def stop(self) -> None:
+            pass
+
+        async def send(self, msg: OutboundMessage) -> None:
+            raise RuntimeError("route gone")
+
+    fake_config = SimpleNamespace(
+        channels=ChannelsConfig(send_max_retries=2),
+        providers=SimpleNamespace(groq=SimpleNamespace(api_key="")),
+    )
+
+    mgr = ChannelManager.__new__(ChannelManager)
+    mgr.config = fake_config
+    mgr.bus = MessageBus()
+    channel = _FailingChannel(fake_config, mgr.bus)
+    mgr.channels = {"failing": channel}
+    mgr._dispatch_task = None
+    mgr._outbound_slots = asyncio.Semaphore(10)
+    mgr._outbound_sends = asyncio.Semaphore(10)
+    mgr._stopping_channels = set()
+    mgr._outbound_tasks = {}
+    mgr._outbound_tails = {}
+
+    msg = OutboundMessage(channel="failing", chat_id="123", content="probe")
+    future = asyncio.get_running_loop().create_future()
+    msg.delivery_future = future
+
+    with patch("nanobot.channels.manager.asyncio.sleep", new_callable=AsyncMock):
+        await mgr._queue_outbound(channel, msg)
+        pending = [task for task in mgr._outbound_tasks if not task.done()]
+        await asyncio.gather(*pending, return_exceptions=True)
+
+    assert future.done()
+    with pytest.raises(RuntimeError, match="route gone"):
+        future.result()
 
 
 @pytest.mark.asyncio
