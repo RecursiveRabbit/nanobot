@@ -690,6 +690,23 @@ class ContextGovernor:
                 )
             new_input = replace(compaction.transcript_input, history=outcome.history)
             new_raw = compaction.transcript_builder(new_input)
+            # The strip answers from the session file, whose tail is the
+            # early-persisted trigger row; the transcript builder then
+            # re-appends the current message on top of it. Keep exactly one
+            # copy: the duplicate reached the model AND was re-persisted at
+            # the turn-end boundary shift (discord:main 2026-11-09: nime's
+            # session message journaled twice as records [204]/[205]).
+            # Equality is role+content, not dict identity: the persisted row
+            # carries extras (message_metadata, originator) the built row
+            # lacks, which is why the strict comparison below never caught
+            # this case.
+            if (
+                len(new_raw) >= 2
+                and new_raw[-1].get("role") == "user"
+                and new_raw[-2].get("role") == "user"
+                and new_raw[-1].get("content") == new_raw[-2].get("content")
+            ):
+                new_raw = new_raw[:-1]
             # Preserve this turn's in-flight additions past the accepted
             # boundary, applying the same placeholder to any tool results
             # they carry. The strip takes EVERY tool result, persisted or
@@ -702,7 +719,8 @@ class ContextGovernor:
             if (
                 delta_additions
                 and new_raw
-                and delta_additions[0] == new_raw[-1]
+                and delta_additions[0].get("role") == new_raw[-1].get("role")
+                and delta_additions[0].get("content") == new_raw[-1].get("content")
             ):
                 delta_additions = delta_additions[1:]
             for message in delta_additions:

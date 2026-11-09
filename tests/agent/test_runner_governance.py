@@ -320,6 +320,111 @@ async def test_runner_strips_tool_results_and_preserves_current_input(monkeypatc
     )
 
 
+async def test_runner_strip_does_not_duplicate_the_trigger_message(monkeypatch):
+    """The strip answers from the session file, whose tail is the
+    early-persisted trigger row; the transcript builder would re-append the
+    current message on top of it. The rebuilt request must carry the
+    trigger exactly once — the duplicate reached the model AND was
+    re-persisted at the turn-end boundary shift (discord:main 2026-11-09:
+    nime's session message journaled twice as records [204]/[205]). The
+    persisted row carries extras (message_metadata, originator) that the
+    freshly built row lacks, so the dedupe must compare role+content."""
+    provider = MagicMock(spec=LLMProvider)
+    provider.can_resume_conversation_state.return_value = False
+    requests: list[list[dict]] = []
+
+    async def request(*, messages, **_kwargs):
+        requests.append(messages)
+        return LLMResponse(content="done")
+
+    provider.chat_stream_with_retry = request
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    fat_result = "tool output " * 2_000
+    estimate = MagicMock(
+        side_effect=lambda _provider, _model, messages, _tools: (
+            (600, "test-counter")
+            if any(message.get("content") == fat_result for message in messages)
+            else (100, "test-counter")
+        )
+    )
+    monkeypatch.setattr(
+        "nanobot.agent.context_governance.estimate_prompt_tokens_chain",
+        estimate,
+    )
+    trigger = "Your report is present but untracked. Please land it."
+    stripped_history = [
+        {"role": "user", "content": "old question"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "id": "call-1",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": "{}"},
+            }],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-1",
+            "name": "read_file",
+            "content": CONTEXT_STRIP_PLACEHOLDER,
+        },
+        # The early-persisted trigger row, exactly as the session file
+        # carries it: extras included.
+        {
+            "role": "user",
+            "content": trigger,
+            "message_metadata": {"_session_message": {"message_id": "abc"}},
+            "originator": {"kind": "resident", "handle": "nime"},
+        },
+    ]
+    strip = AsyncMock(return_value=ContextStripOutcome(
+        status="stripped",
+        history=stripped_history,
+        reason="1 tool result(s) stripped",
+    ))
+
+    result = await AgentRunner().run(make_run_spec(
+        provider,
+        initial_messages=None,
+        transcript_input=TranscriptInput(
+            history=[
+                {"role": "user", "content": "old question"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": "{}"},
+                    }],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call-1",
+                    "name": "read_file",
+                    "content": fat_result,
+                },
+            ],
+            current_message=trigger,
+        ),
+        transcript_builder=_build_transcript,
+        context_strip=strip,
+        tools=tools,
+        model="test-model",
+        context_window_tokens=1_624,
+        max_tokens=100,
+        max_iterations=1,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+    ))
+
+    assert result.final_content == "done"
+    assert len(requests) == 1
+    user_rows = [m for m in requests[0] if m.get("role") == "user"]
+    assert [m.get("content") for m in user_rows] == ["old question", trigger]
+
+
 async def test_runner_pauses_when_strip_consent_required(monkeypatch):
     """The single-run law: a second trip fails the turn clearly, names the
     errors/ record, and never calls the provider."""
