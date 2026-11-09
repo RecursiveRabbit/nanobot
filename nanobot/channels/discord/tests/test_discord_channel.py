@@ -87,10 +87,11 @@ class _FakePartialMessage:
 
 class _FakeSentMessage:
     # Sent-message double supporting edit() for streaming tests.
-    def __init__(self, channel, content: str) -> None:
+    def __init__(self, channel, content: str, author: object | None = None) -> None:
         self.channel = channel
         self.content = content
         self.edits: list[dict] = []
+        self.author = author or SimpleNamespace(id=999)
 
     async def edit(self, **kwargs) -> None:
         self.edits.append(dict(kwargs))
@@ -105,12 +106,23 @@ class _FakeChannel:
         channel_id: int = 123,
         parent_id: int | None = None,
         parent: object | None = None,
+        *,
+        # Simulates Discord accepting the message while the client sees an
+        # error (the classic client-side timeout): the payload lands and is
+        # visible in history, but send() raises.
+        fail_next_sends: int = 0,
+        # Simulates a rejection where nothing reached Discord: send() raises
+        # without recording anything.
+        reject_next_sends: int = 0,
     ) -> None:
         self.id = channel_id
         self.parent_id = parent_id
         self.parent = parent
         self.sent_payloads: list[dict] = []
         self.sent_messages: list[_FakeSentMessage] = []
+        self.history_messages: list[_FakeSentMessage] = []
+        self.fail_next_sends = fail_next_sends
+        self.reject_next_sends = reject_next_sends
         self.trigger_typing_calls = 0
         self.typing_enter_hook = None
 
@@ -119,10 +131,21 @@ class _FakeChannel:
         if "file" in payload:
             payload["file_name"] = payload["file"].filename
             del payload["file"]
+        if self.reject_next_sends > 0:
+            self.reject_next_sends -= 1
+            raise RuntimeError("simulated send rejection")
         self.sent_payloads.append(payload)
         message = _FakeSentMessage(self, payload.get("content", ""))
         self.sent_messages.append(message)
+        self.history_messages.insert(0, message)
+        if self.fail_next_sends > 0:
+            self.fail_next_sends -= 1
+            raise asyncio.TimeoutError("simulated client-side timeout after accept")
         return message
+
+    async def history(self, limit: int = 10):
+        for message in self.history_messages[:limit]:
+            yield message
 
     def get_partial_message(self, message_id: int) -> _FakePartialMessage:
         return _FakePartialMessage(message_id)
@@ -810,6 +833,128 @@ async def test_send_delta_stream_end_splits_oversized_reply(monkeypatch) -> None
     assert target.sent_payloads == [{"content": prefix}, {"content": chunks[1]}]
     assert target.sent_messages[0].edits == [{"content": chunks[0]}, {"content": chunks[0]}]
     assert owner._stream_bufs == {}
+
+
+@pytest.mark.asyncio
+async def test_send_delta_initial_send_retry_recovers_orphan(monkeypatch) -> None:
+    """Discord accepted the initial send but the client saw a timeout. The
+    manager retries the same delta; the retry must adopt the orphaned
+    message instead of sending a duplicate copy (the duplication ticket,
+    2026-11-09: a retry after an accepted-but-raising send double-delivered).
+    """
+    owner = DiscordChannel(DiscordConfig(enabled=True, allow_from=["*"]), MessageBus())
+    client = _FakeDiscordClient(owner, intents=None)
+    owner._client = client
+    owner._running = True
+    owner._bot_user_id = "999"
+    target = _FakeChannel(channel_id=123, fail_next_sends=1)
+    client.channels[123] = target
+
+    times = iter([1.0, 3.0, 5.0, 7.0])
+    monkeypatch.setattr("nanobot.channels.discord.runtime.time.monotonic", lambda: next(times, 7.0))
+
+    with pytest.raises(asyncio.TimeoutError):
+        await owner.send_delta("123", "hel", stream_id="s1")
+    # manager replays the same delta
+    await owner.send_delta("123", "hel", stream_id="s1")
+
+    # exactly one channel message, and the buffer adopted the orphan
+    assert len(target.sent_payloads) == 1
+    buf = owner._stream_bufs["123"]
+    assert buf.message is target.sent_messages[0]
+    assert not buf.initial_uncertain
+
+    await owner.send_delta("123", "lo", stream_id="s1")
+    await owner.send_delta("123", "", stream_id="s1", stream_end=True)
+    assert target.sent_messages[0].edits[-1] == {"content": "hello"}
+
+
+@pytest.mark.asyncio
+async def test_send_delta_initial_send_rejection_resends_without_doubling(monkeypatch) -> None:
+    """A genuine rejection (nothing reached Discord) must be retried as a
+    fresh send with the buffer text intact — never re-appended ("helhel")."""
+    owner = DiscordChannel(DiscordConfig(enabled=True, allow_from=["*"]), MessageBus())
+    client = _FakeDiscordClient(owner, intents=None)
+    owner._client = client
+    owner._running = True
+    owner._bot_user_id = "999"
+    target = _FakeChannel(channel_id=123, reject_next_sends=1)
+    client.channels[123] = target
+
+    times = iter([1.0, 3.0, 5.0])
+    monkeypatch.setattr("nanobot.channels.discord.runtime.time.monotonic", lambda: next(times, 5.0))
+
+    with pytest.raises(RuntimeError):
+        await owner.send_delta("123", "hel", stream_id="s1")
+    await owner.send_delta("123", "hel", stream_id="s1")
+
+    # the rejection delivered nothing, so the retry is the one copy — and
+    # the buffer text was not re-appended ("hel", never "helhel")
+    assert [p["content"] for p in target.sent_payloads] == ["hel"]
+    assert owner._stream_bufs["123"].text == "hel"
+    assert not owner._stream_bufs["123"].initial_uncertain
+
+
+@pytest.mark.asyncio
+async def test_send_delta_retry_does_not_double_append_on_edit(monkeypatch) -> None:
+    """The edit path is flushed per delta too: a retry after a raising edit
+    must not append the delta a second time."""
+    owner = DiscordChannel(DiscordConfig(enabled=True, allow_from=["*"]), MessageBus())
+    client = _FakeDiscordClient(owner, intents=None)
+    owner._client = client
+    owner._running = True
+    target = _FakeChannel(channel_id=123)
+    client.channels[123] = target
+
+    times = iter([1.0, 3.0, 5.0, 7.0])
+    monkeypatch.setattr("nanobot.channels.discord.runtime.time.monotonic", lambda: next(times, 7.0))
+
+    await owner.send_delta("123", "a", stream_id="s1")
+
+    first_edit = target.sent_messages[0].edit
+    edit_failures = iter([True])
+    async def flaky_edit(**kwargs):
+        await first_edit(**kwargs)
+        if next(edit_failures, False):
+            raise asyncio.TimeoutError("simulated edit timeout")
+    target.sent_messages[0].edit = flaky_edit  # type: ignore[method-assign]
+
+    with pytest.raises(asyncio.TimeoutError):
+        await owner.send_delta("123", "b", stream_id="s1")
+    await owner.send_delta("123", "b", stream_id="s1")  # manager replay
+
+    assert owner._stream_bufs["123"].text == "ab"
+    await owner.send_delta("123", "", stream_id="s1", stream_end=True)
+    assert target.sent_messages[0].edits[-1] == {"content": "ab"}
+
+
+@pytest.mark.asyncio
+async def test_send_delta_stream_id_change_finalizes_old_buffer(monkeypatch) -> None:
+    """A new stream_id supersedes the buffer: the old message is committed at
+    its full text instead of being orphaned at its last partial edit."""
+    owner = DiscordChannel(DiscordConfig(enabled=True, allow_from=["*"]), MessageBus())
+    client = _FakeDiscordClient(owner, intents=None)
+    owner._client = client
+    owner._running = True
+    target = _FakeChannel(channel_id=123)
+    client.channels[123] = target
+
+    times = iter([1.0, 3.0, 5.0, 7.0])
+    monkeypatch.setattr("nanobot.channels.discord.runtime.time.monotonic", lambda: next(times, 7.0))
+
+    await owner.send_delta("123", "hello", stream_id="s1")
+    await owner.send_delta("123", " world", stream_id="s1")
+    await owner.send_delta("123", "new answer", stream_id="s2")
+
+    assert [p["content"] for p in target.sent_payloads] == ["hello", "new answer"]
+    # old buffer committed at full text (mid edit + finalizing edit)
+    assert target.sent_messages[0].edits == [
+        {"content": "hello world"},
+        {"content": "hello world"},
+    ]
+    buf = owner._stream_bufs["123"]
+    assert buf.stream_id == "s2"
+    assert buf.text == "new answer"
 
 
 @pytest.mark.asyncio

@@ -47,6 +47,20 @@ class _StreamBuf:
     message: discord.Message | None = None
     last_edit: float = 0.0
     stream_id: str | None = None
+    # The channel manager retries a failed delivery by re-running send_delta
+    # with the SAME delta, so both mutation steps are guarded:
+    # - initial_uncertain: the initial target.send() raised AFTER Discord may
+    #   have accepted it; the next call recovers the orphan from recent
+    #   history instead of sending a duplicate copy.
+    # - inflight_delta: the delta whose flush (initial send or edit) raised;
+    #   already appended to text, so a retry must not append it again.
+    initial_uncertain: bool = False
+    inflight_delta: str | None = None
+
+
+# How far back an uncertain initial send searches channel history for the
+# message Discord accepted before the client saw the response.
+_RECOVERY_HISTORY_LIMIT = 10
 
 
 class DiscordConfig(Base):
@@ -260,20 +274,13 @@ if DISCORD_AVAILABLE:
 
         def _resolve_outbound_chat_id(self, chat_id: str) -> str:
             """Resolve numeric ids and the unified `main` alias without a crash."""
-            if chat_id.isdigit():
-                return chat_id
-            channel = self._known_channels.get(chat_id)
-            if channel is not None:
-                return str(channel.id)
-            # Unified Discord sessions use the non-numeric `main` label. Use the
-            # most recent real inbound channel rather than int('main').
-            last = getattr(self, "_last_inbound_channel_id", None)
-            if last:
-                return last
-            raise RuntimeError(
-                f"Discord target {chat_id!r} has no cached route; no inbound "
-                "message has established the unified session's numeric channel"
-            )
+            # The resolver lives on the channel (it owns the alias cache and
+            # the last-inbound marker); the client only delegates. d4ea8772
+            # read both off the client, which raised AttributeError for every
+            # non-numeric chat_id (discord:main, 2026-11-09: compaction
+            # notices and `message` deliveries failed three retries with
+            # "no attribute '_known_channels'").
+            return self._channel._resolve_outbound_chat_id(chat_id)
 
         async def send_outbound(self, msg: OutboundMessage) -> None:
             """Send a nanobot outbound message using Discord transport rules."""
@@ -571,7 +578,14 @@ class DiscordChannel(BaseChannel):
         resuming: bool = False,
         merge_next: bool = False,
     ) -> None:
-        """Progressive Discord delivery: send once, then edit until the stream ends."""
+        """Progressive Discord delivery: send once, then edit until the stream ends.
+
+        The channel manager retries a failed delivery by re-running this
+        method with the SAME delta. Both state steps are idempotent under
+        that replay: an applied delta is never appended twice, and an
+        initial send that raised after Discord accepted it is recovered
+        from recent history instead of being delivered a second time.
+        """
         client = self._client
         if client is None or not client.is_ready():
             self.logger.warning("client not ready; dropping stream delta")
@@ -591,17 +605,19 @@ class DiscordChannel(BaseChannel):
             return
 
         buf = self._stream_bufs.get(chat_id)
-        if buf is None or (
+        if buf is not None and (
             stream_id is not None and buf.stream_id is not None and buf.stream_id != stream_id
         ):
+            # A new stream supersedes this buffer. Commit the old buffer's
+            # message at its full text first — otherwise the channel keeps a
+            # mid-stream orphan while the fresh initial send starts below.
+            await self._finalize_replaced_buffer(chat_id, buf)
+            buf = None
+        if buf is None:
             buf = _StreamBuf(stream_id=stream_id)
             self._stream_bufs[chat_id] = buf
         elif buf.stream_id is None:
             buf.stream_id = stream_id
-
-        buf.text += delta
-        if not buf.text.strip():
-            return
 
         target = await self._resolve_channel(chat_id)
         if target is None:
@@ -609,12 +625,36 @@ class DiscordChannel(BaseChannel):
             return
 
         now = time.monotonic()
+        if buf.message is None and buf.initial_uncertain:
+            # The previous initial send raised AFTER Discord may have
+            # accepted it. Adopt the orphaned message instead of sending a
+            # duplicate copy; when recovery finds nothing the message truly
+            # never landed and the resend below is correct.
+            recovered = await self._recover_uncertain_initial(target, buf.text)
+            if recovered is not None:
+                buf.message = recovered
+                buf.last_edit = now
+            buf.initial_uncertain = False
+
+        if buf.inflight_delta == delta:
+            # Retry of the delta whose flush raised: its text is already in
+            # buf.text — re-flush without re-appending.
+            pass
+        else:
+            buf.text += delta
+            buf.inflight_delta = delta
+        if not buf.text.strip():
+            return
+
         if buf.message is None:
             try:
                 buf.message = await target.send(content=buf.text)
                 buf.last_edit = now
+                buf.inflight_delta = None
             except Exception as e:
-                self.logger.warning("stream initial send failed: {}", e)
+                # Discord may hold a message the client never saw accepted.
+                buf.initial_uncertain = True
+                self.logger.warning("stream initial send failed (Discord may hold it): {}", e)
                 raise
             return
 
@@ -624,9 +664,52 @@ class DiscordChannel(BaseChannel):
         try:
             await buf.message.edit(content=DiscordBotClient._build_chunks(buf.text, [], False)[0])
             buf.last_edit = now
+            buf.inflight_delta = None
         except Exception as e:
             self.logger.warning("stream edit failed: {}", e)
             raise
+
+    async def _recover_uncertain_initial(self, target: Any, text: str) -> Any | None:
+        """Adopt an initial-send message Discord accepted before the client
+        saw the response. Searches recent channel history for this bot's own
+        message with exactly this content; None when nothing matches."""
+        bot_id = self._bot_user_id
+        try:
+            async for message in target.history(limit=_RECOVERY_HISTORY_LIMIT):
+                author_id = getattr(getattr(message, "author", None), "id", None)
+                if bot_id is not None and str(author_id) != str(bot_id):
+                    continue
+                if message.content == text:
+                    return message
+        except Exception as e:
+            self.logger.warning("orphaned stream message recovery failed: {}", e)
+        return None
+
+    async def _finalize_replaced_buffer(self, chat_id: str, buf: _StreamBuf) -> None:
+        """Commit a superseded stream buffer's message at its full text.
+
+        Called when a new stream_id replaces the buffer mid-chat: without
+        this, the old message sits in-channel at its last partial edit while
+        the new stream starts afresh. Errors are logged, not raised — a
+        failed finalization must not block the new stream, and the buffer
+        registry is replaced by the caller right after.
+        """
+        if buf.message is None or not buf.text:
+            return
+        chunks = DiscordBotClient._build_chunks(buf.text, [], False)
+        if not chunks:
+            return
+        try:
+            await buf.message.edit(content=chunks[0])
+        except Exception as e:
+            self.logger.warning("replaced stream final edit failed for {}: {}", chat_id, e)
+            return
+        for extra_chunk in chunks[1:]:
+            try:
+                await buf.message.channel.send(content=extra_chunk)
+            except Exception as e:
+                self.logger.warning("replaced stream overflow send failed for {}: {}", chat_id, e)
+                break
 
     async def _handle_discord_message(self, message: discord.Message) -> None:
         """Handle incoming Discord messages from discord.py.
@@ -706,6 +789,27 @@ class DiscordChannel(BaseChannel):
     async def _on_message(self, message: discord.Message) -> None:
         """Backward-compatible alias for legacy tests/callers."""
         await self._handle_discord_message(message)
+
+    def _resolve_outbound_chat_id(self, chat_id: str) -> str:
+        """Resolve numeric ids and the unified `main` alias without a crash.
+
+        The alias cache and the last-inbound marker both live here, written
+        by _remember_channel and _handle_discord_message respectively.
+        """
+        if chat_id.isdigit():
+            return chat_id
+        channel = self._known_channels.get(chat_id)
+        if channel is not None:
+            return str(channel.id)
+        # Unified Discord sessions use the non-numeric `main` label. Use the
+        # most recent real inbound channel rather than int('main').
+        last = getattr(self, "_last_inbound_channel_id", None)
+        if last:
+            return last
+        raise RuntimeError(
+            f"Discord target {chat_id!r} has no cached route; no inbound "
+            "message has established the unified session's numeric channel"
+        )
 
     async def _resolve_channel(self, chat_id: str) -> Any | None:
         """Resolve a Discord channel or DM from cache, fetch, or user create."""
