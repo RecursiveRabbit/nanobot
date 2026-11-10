@@ -85,6 +85,12 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         "scissors",
     ),
     BuiltinCommandSpec(
+        "/strip",
+        "Strip context now",
+        "Run the tool-result strip on this chat immediately — no model call.",
+        "scissors",
+    ),
+    BuiltinCommandSpec(
         "/stop",
         "Stop current task",
         "Cancel the active agent turn for this chat.",
@@ -339,6 +345,60 @@ async def cmd_strip_again(ctx: CommandContext) -> OutboundMessage:
             f"Consent recorded (grant #{grants}) — the next over-budget turn "
             "may strip tool call results once more. Resend your message."
         ),
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
+
+
+async def cmd_strip(ctx: CommandContext) -> OutboundMessage:
+    """Run the tool-result strip on this session now (Evans 2026-11-10).
+
+    A deliberate command is consent by definition: one grant is recorded so
+    the single-run law does not refuse the request that asked for it. The
+    shear itself is the same door every other strip uses — the pre-strip
+    sibling is still required, the ledger still counts the strip, provider
+    state is reset, and the next turn begins from the stripped file. No
+    model call is spent on the strip.
+    """
+    from nanobot.agent.context_governance import CONTEXT_STRIP_METADATA_KEY
+
+    loop = ctx.loop
+    session = ctx.session or loop.sessions.get_or_create(ctx.key)
+    meta = dict(session.metadata.get(CONTEXT_STRIP_METADATA_KEY) or {})
+    grants = meta.get("consent_grants")
+    meta["consent_grants"] = (grants if isinstance(grants, int) else 0) + 1
+    meta["consent_pending"] = False
+    session.metadata[CONTEXT_STRIP_METADATA_KEY] = meta
+    loop.sessions.save(session)
+
+    workspace = getattr(loop, "workspace", None)
+    try:
+        scope = loop.workspace_scopes.for_turn(
+            channel=ctx.msg.channel,
+            message_metadata=ctx.msg.metadata,
+            session_metadata=session.metadata,
+        )
+        workspace = scope.project_path
+    except Exception:
+        pass
+
+    outcome = await loop._context_strip_for_turn(session, workspace=workspace)
+    ledger = session.metadata.get(CONTEXT_STRIP_METADATA_KEY) or {}
+    if outcome.status == "stripped":
+        sibling = ledger.get("last_preservation") or "(sibling recorded in the session ledger)"
+        content = (
+            f"✂️ Context strip complete — {outcome.reason}. "
+            f"Provider state reset; the next turn starts from the stripped "
+            f"history. Pre-strip sibling: {sibling}."
+        )
+    else:
+        content = (
+            outcome.user_notice
+            or f"Strip refused ({outcome.reason or outcome.status})."
+        )
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=content,
         metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
     )
 
@@ -721,6 +781,7 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/new", cmd_new)
     router.exact("/compact", cmd_compact)
     router.exact("/strip-again", cmd_strip_again)
+    router.exact("/strip", cmd_strip)
     router.exact("/status", cmd_status)
     router.exact("/model", cmd_model)
     router.prefix("/model ", cmd_model)

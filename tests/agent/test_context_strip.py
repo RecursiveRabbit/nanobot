@@ -256,6 +256,61 @@ async def test_strip_refused_when_preservation_fails(tmp_path, monkeypatch):
     assert record.exists()
 
 
+async def test_strip_command_runs_the_shear_now(tmp_path):
+    """Evans 2026-11-10: /strip runs the shear immediately — a deliberate
+    command is consent, so the grant is recorded, the sibling is still
+    required, and the ledger still counts the strip."""
+    from nanobot.command.builtin import cmd_strip
+
+    loop = _make_loop(tmp_path)
+    session = _session_with_tool_results()
+    _persist(session, loop)
+    ctx = MagicMock()
+    ctx.loop = loop
+    ctx.session = session
+    ctx.key = session.key
+    ctx.msg.channel = "websocket"
+    ctx.msg.chat_id = "test"
+    ctx.msg.metadata = {}
+
+    reply = await cmd_strip(ctx)
+
+    assert "Context strip complete" in reply.content
+    assert "2 tool result(s) stripped" in reply.content
+    tools = [m for m in session.messages if m.get("role") == "tool"]
+    assert tools and all(m["content"] == CONTEXT_STRIP_PLACEHOLDER for m in tools)
+    meta = session.metadata[CONTEXT_STRIP_METADATA_KEY]
+    assert meta["count"] == 1
+    assert meta["consent_grants"] == 1
+    assert meta["consent_pending"] is False
+    assert reply.metadata.get("render_as") == "text"
+
+
+async def test_strip_command_reports_exhausted(tmp_path):
+    """Prose-only sessions: the command answers with the way through
+    (/compact, /new), never a fake success."""
+    from nanobot.command.builtin import cmd_strip
+
+    loop = _make_loop(tmp_path)
+    session = Session(
+        key="websocket:test",
+        messages=[{"role": "user", "content": "a very long prose turn"}],
+    )
+    _persist(session, loop)
+    ctx = MagicMock()
+    ctx.loop = loop
+    ctx.session = session
+    ctx.key = session.key
+    ctx.msg.channel = "websocket"
+    ctx.msg.chat_id = "test"
+    ctx.msg.metadata = {}
+
+    reply = await cmd_strip(ctx)
+
+    assert "Context strip complete" not in reply.content
+    assert "/compact" in reply.content
+
+
 async def test_strip_again_command_grants_consent(tmp_path):
     from nanobot.command.builtin import cmd_strip_again
 

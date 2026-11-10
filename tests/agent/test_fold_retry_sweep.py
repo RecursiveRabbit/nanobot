@@ -2,19 +2,14 @@
 
 Ruling: the-townline/requests/2026-11-08-from-pore-to-pore-fold-arming-queued-delivery.md
 (Evans via nime, 2026-11-08): no fold while the agent is busy; retry
-DELIVERY about an hour later and keep retrying until a real fold turn
-lands. Retry delivery, never completion: a deliberate non-Goodnight is a
-valid stop; provider errors, cancellation and non-answers requeue; a
-completed Goodnight cancels every pending retry. Next-attempt state is
-durable (retry.json), deliveries coalesce, and a busy-skip never advances
-the watermark — nothing in the sweep ever writes last_archived.
-
-The cases the ruling names: busy then idle; repeated busy skips; restart
-with a due retry; duplicate suppression; no watermark advance; delivered
-decline; provider error; Goodnight cancellation; and a report containing
-the busy-skip and the next attempt. Plus the two classes the boundary
-implies: harness non-answers requeue, and a strip pause gate stops retries
-loudly (operator, not automation).
+DELIVERY about an hour later and keep retrying until the prompt is
+delivered. Evans 2026-11-10: delivery is the ledger's whole horizon — the
+resident's reply is the fold stage's business, never this bookkeeping's,
+so there is no decline/gate/sentinel classification here at all. Busy
+then idle; repeated busy skips; restart with a due retry; duplicate
+suppression; no watermark advance; a delivered prompt clears its entry;
+provider errors requeue; goodnight cancellation; and a report containing
+the busy-skip and the next attempt.
 
 These run the REAL sweep script (subprocess) against fixture dirs via the
 DAILY_COMPACTION_* seams, same pattern as test_fold_mint_sweep.py. When the
@@ -168,6 +163,19 @@ def _sweep_log(rig) -> str:
     return f.read_text() if f.is_file() else ""
 
 
+def _record_delivery(rig, *, status: str = "ok", when_ago_s: int = 1800) -> None:
+    """Write the trigger-store's record of a delivery attempt, like the
+    gateway does after running the trigger."""
+    store = json.loads((rig["trig_dir"] / "triggers.json").read_text())
+    store["triggers"].append({
+        "id": TID, "name": TID, "enabled": True, "channel": "websocket",
+        "chatId": "abc", "sessionKey": KEY, "senderId": "daily-compaction",
+        "lastStatus": status,
+        "lastError": None if status == "ok" else "provider error",
+        "lastRunAtMs": int((time.time() - when_ago_s) * 1000)})
+    (rig["trig_dir"] / "triggers.json").write_text(json.dumps(store))
+
+
 def test_sweep_arms_busy_skip_and_reports_it(rig):
     path = _write_session(rig["sess_dir"], KEY, pending=True)
     before = path.read_bytes()
@@ -259,17 +267,37 @@ def test_goodnight_cancels_every_pending_retry(rig):
     assert "folded" in _sweep_log(rig)
 
 
-def test_delivered_decline_stops_retries(rig):
+def test_busy_arm_with_work_text_redelivers_not_declines(rig):
+    # The nime shape (2026-11-10): armed while the agent was busy; its
+    # in-flight turn finished after arming with ordinary work text; no
+    # fold prompt was ever delivered. The bookkeeping must not read that
+    # text as an answer — it delivers.
+    tail = [_assistant("The blockers are cleared. Pushing the record now.")]
+    path = _write_session(rig["sess_dir"], KEY, tail=tail)
+    _age(path)
+    _arm(rig, path, reason="busy-skip")
+    r = rig["run"](retry=True)
+    assert r.returncode == 0, r.stderr
+    assert len(_deliveries(rig["trig_dir"])) == 1
+    assert _ledger(rig)[KEY]["attempts"] == 1
+    assert "declined" not in _sweep_log(rig)
+
+
+def test_delivered_prompt_clears_entry_without_reading_the_reply(rig):
+    # Delivery is the whole horizon: once the prompt is delivered, the
+    # entry clears — whatever the resident says is the fold stage's issue.
     tail = [_assistant("Sleep is wrong tonight — the bench run is mid-flight; "
                        "I'll fold in the morning. Carrying on.")]
     path = _write_session(rig["sess_dir"], KEY, tail=tail)
     _age(path)
     _arm(rig, path, reason="delivered")
+    _record_delivery(rig, status="ok")
     r = rig["run"](retry=True)
     assert r.returncode == 0, r.stderr
     assert _deliveries(rig["trig_dir"]) == []
     assert KEY not in _ledger(rig)
-    assert "declined" in _sweep_log(rig)
+    assert "delivered" in _sweep_log(rig)
+    assert "declined" not in _sweep_log(rig)
 
 
 def test_provider_error_requeues(rig):
@@ -291,30 +319,32 @@ def test_provider_error_requeues(rig):
     assert ent["reason"] == "delivery-error"
 
 
-def test_harness_nonanswer_requeues(rig):
+def test_harness_nonanswer_does_not_change_delivery_bookkeeping(rig):
     tail = [_assistant("I completed the tool steps but couldn't produce a "
                        "final answer. Please try again or narrow the task.")]
     path = _write_session(rig["sess_dir"], KEY, tail=tail)
     _age(path)
     _arm(rig, path)
+    _record_delivery(rig, status="ok")
     r = rig["run"](retry=True)
     assert r.returncode == 0, r.stderr
-    assert len(_deliveries(rig["trig_dir"])) == 1
-    assert _ledger(rig)[KEY]["reason"] == "no-answer"
+    assert _deliveries(rig["trig_dir"]) == []
+    assert KEY not in _ledger(rig)
+    assert "delivered" in _sweep_log(rig)
 
 
-def test_pause_gate_stops_retries_loudly(rig):
+def test_pause_gate_text_is_not_a_verdict(rig):
     tail = [_assistant("⏸ **Context pause gate.**\n\nThis turn crossed the "
                        "model's context window … send `/strip-again` …")]
     path = _write_session(rig["sess_dir"], KEY, tail=tail)
     _age(path)
     _arm(rig, path)
+    _record_delivery(rig, status="ok")
     r = rig["run"](retry=True)
     assert r.returncode == 0, r.stderr
     assert _deliveries(rig["trig_dir"]) == []
     assert KEY not in _ledger(rig)
-    assert "gated" in _sweep_log(rig)
-    assert "alert=yes" in _sweep_log(rig)
+    assert "delivered" in _sweep_log(rig)
 
 
 def test_dry_run_arms_and_delivers_nothing(rig):
