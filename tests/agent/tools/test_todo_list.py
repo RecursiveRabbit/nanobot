@@ -8,7 +8,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.context import RequestContext
+from nanobot.agent.tools.context import (
+    RequestContext,
+    request_context,
+)
 from nanobot.agent.tools.runtime_control import AgentRuntimeControl
 from nanobot.agent.tools.todo_list import _MAX_ITEM_CHARS, _MAX_ITEMS, TodoListTool
 from nanobot.agent.tools.web import WebToolsConfig
@@ -18,6 +21,27 @@ from nanobot.config.schema import ToolsConfig
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# Seat keys chosen to reproduce the 2026-11-10 two-Tuto incident: the pod
+# route and the harness route share the handle "tuto" but never the key.
+POD_TUTO_KEY = "websocket:tuto"
+HARNESS_TUTO_KEY = "websocket:0c417c1f-ba82-4ba2-a969-86fa50ffe6a3"
+
+
+def _seat(key: str) -> RequestContext:
+    return RequestContext(channel="websocket", chat_id="chat-1", session_key=key)
+
+
+def _bound(key: str):
+    """Bind one seat's request context — what the loop does around every turn."""
+    return request_context(_seat(key))
+
+
+@pytest.fixture(autouse=True)
+def _bound_seat():
+    """Every test runs inside one bound seat, as every production turn does."""
+    with request_context(_seat("websocket:test-seat")) as ctx:
+        yield ctx
 
 def _make_mock_loop():
     """Build a lightweight mock AgentLoop with the attributes TodoListTool reads."""
@@ -250,3 +274,53 @@ class TestRegistry:
         assert "Added" in result
         result = await loop.tools.execute("todo_list", {"action": "list"})
         assert "1. registry item" in result
+
+
+# ---------------------------------------------------------------------------
+# No-cross negative controls — the 2026-11-10 two-Tuto incident must not
+# recur: two live seats share the handle "tuto" (pod `websocket:tuto`,
+# harness `websocket:0c417c1f-...`), and a guide message intended for the
+# pod route arrived at the harness route carrying the other seat's todo
+# payload, because the list was one gateway-global scratchpad entry.
+# ---------------------------------------------------------------------------
+
+class TestSessionIsolation:
+
+    @pytest.mark.asyncio
+    async def test_same_handle_two_seats_do_not_cross(self):
+        tool = _make_tool()
+        # The pod seat works the Babo lane...
+        with _bound(POD_TUTO_KEY):
+            await tool.execute(action="add", item="contract agreed (soro)")
+        # ...a message landing on the harness route (same handle, different
+        # key) must find NONE of it, in either direction.
+        with _bound(HARNESS_TUTO_KEY):
+            assert await tool.execute(action="list") == "No todo items."
+            await tool.execute(action="add", item="lark adoption follow-up")
+        with _bound(POD_TUTO_KEY):
+            result = await tool.execute(action="list")
+        assert "contract agreed (soro)" in result
+        assert "lark adoption follow-up" not in result
+
+    @pytest.mark.asyncio
+    async def test_provider_block_isolated_per_seat(self):
+        # The runtime-context block is how a model SEES the list each turn;
+        # the harness route's model must get no block from the pod seat's items.
+        tool = _make_tool()
+        with _bound(POD_TUTO_KEY):
+            await tool.execute(action="add", item="babo office CLI")
+        block = await tool._provide_runtime_context(_seat(HARNESS_TUTO_KEY))
+        assert block is None
+
+    @pytest.mark.asyncio
+    async def test_no_session_key_falls_back_without_touching_seats(self):
+        # A caller with no session key (chat_id fallback) gets its own bucket
+        # and cannot see — or wipe — a named seat's list.
+        tool = _make_tool()
+        with _bound(POD_TUTO_KEY):
+            await tool.execute(action="add", item="pod seat item")
+        with request_context(RequestContext(channel="cli", chat_id="elsewhere")):
+            result = await tool.execute(action="list")
+        assert result == "No todo items."
+        with _bound(POD_TUTO_KEY):
+            assert "pod seat item" in await tool.execute(action="list")

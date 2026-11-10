@@ -8,7 +8,12 @@ from __future__ import annotations
 from typing import Any, cast
 
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
-from nanobot.agent.tools.context import RequestContext, ToolContext
+from nanobot.agent.tools.context import (
+    RequestContext,
+    ToolContext,
+    current_request_context,
+    current_request_session_key,
+)
 from nanobot.agent.tools.runtime_control import JsonValue, RuntimeControl
 from nanobot.agent.tools.schema import IntegerSchema, StringSchema, tool_parameters_schema
 from nanobot.runtime_context import RuntimeContextBlock
@@ -43,7 +48,9 @@ class TodoListTool(Tool):
 
     Here are your current todo items. You can manage your list with the
     following commands: list, add, remove, clear. Items persist across turns
-    but not gateway restarts.
+    but not gateway restarts. The list is isolated per session: another
+    session on this gateway — even one sharing your handle — cannot see or
+    change your items (two-Tuto message+state leak, 2026-11-10).
     """
 
     def __init__(self, runtime_control: RuntimeControl) -> None:
@@ -69,7 +76,9 @@ class TodoListTool(Tool):
             "Todo list for the current session. "
             "Here are your current todo items. You can manage your list with the "
             "following commands: list, add, remove, clear. "
-            "Items persist across turns but not gateway restarts."
+            "Items persist across turns but not gateway restarts. "
+            "The list is isolated per session — other sessions on this gateway, "
+            "even same-named ones, cannot see or change your items."
         )
 
     def runtime_context_provider(self):
@@ -79,7 +88,7 @@ class TodoListTool(Tool):
         self,
         request: RequestContext,
     ) -> RuntimeContextBlock | None:
-        items = self._current_items()
+        items = self._current_items(request)
         if not items:
             return None
         lines = ["Current todo items:"] + [f"{i}. {text}" for i, text in enumerate(items, 1)]
@@ -106,15 +115,33 @@ class TodoListTool(Tool):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _current_items(self) -> list[str]:
-        raw = self._runtime_control.snapshot().scratchpad.get(_SCRATCHPAD_KEY)
+    def _storage_key(self, request: RequestContext | None = None) -> str:
+        """The todo list belongs to ONE session — never to a handle, never to
+        the gateway. Keyed by the request's session key; falls back to
+        channel:chat_id only when no session key was bound (tests, exotic
+        local paths), so an unbound caller can never reach a bound session's
+        list. Before this namespacing, one in-memory list was shared by every
+        session on the gateway and a same-name seat saw another seat's items
+        (two-Tuto message+state leak, 2026-11-10)."""
+        if request is not None and request.session_key:
+            return f"{_SCRATCHPAD_KEY}::{request.session_key}"
+        key = current_request_session_key()
+        if key:
+            return f"{_SCRATCHPAD_KEY}::{key}"
+        ctx = current_request_context()
+        if ctx is not None and ctx.chat_id:
+            return f"{_SCRATCHPAD_KEY}::{ctx.channel}:{ctx.chat_id}"
+        return f"{_SCRATCHPAD_KEY}::__unbound__"
+
+    def _current_items(self, request: RequestContext | None = None) -> list[str]:
+        raw = self._runtime_control.snapshot().scratchpad.get(self._storage_key(request))
         if isinstance(raw, list):
             return [str(x) for x in raw if isinstance(x, str)]
         return []
 
     def _save_items(self, items: list[str]) -> None:
         self._runtime_control.set_scratchpad(
-            _SCRATCHPAD_KEY,
+            self._storage_key(),
             cast(JsonValue, items),
             max_keys=64,
         )
