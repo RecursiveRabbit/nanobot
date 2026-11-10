@@ -46,7 +46,7 @@ def main() -> None:
     # not a cue to reactivate them later by inertia.
     excluded_handles = {"hise", "tiyu"}
     inert_handles = {
-        "munu": "accidental acceptance session; deliberate adoption via Tuto (sponsor: nime) — inert until onboarding completes",
+        "munu": "accidental acceptance session; deliberate adoption approved by Evans (named human; assignment: requests/2026-11-08-from-nime-to-tuto-munu-onboarding.md); agent guide/delegate: Tuto; sponsor: nime — inert until onboarding completes",
         "joli": "adjudicated by lolu boundary pass 2026-11-08 — retired ROSTER #3 (desk, 2026-10-14); quiet since 2026-09-30; reactivation only via explicit adoption (§10.1)",
         "peti": "adjudicated by lolu boundary pass 2026-11-08 — retired ROSTER #3 (desk, 2026-10-14); accidental deal resident (deal-kevu) exhibited as transient per Evans ruling 2026-10-15; history preserved in place; reactivation only via explicit adoption (§10.1)",
         "gane": "adjudicated by lolu boundary pass 2026-11-08 — dream consolidation attempt (single run, 2026-09-17); attempts do not pass the gate implicitly (§2); futures per §10.1",

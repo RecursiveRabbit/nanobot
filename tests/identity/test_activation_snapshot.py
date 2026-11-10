@@ -42,3 +42,12 @@ def test_boundary_pass_exclusions_and_inert_states(tmp_path):
     assert by_handle["munu"]["surfaces"] == []
     assert by_handle["royi"]["state"] == "active"
     assert set(by_handle["royi"]["surfaces"]) == set(activation_snapshot.SURFACES)
+    purpose = by_handle["munu"]["purpose"]
+    assert by_handle["munu"]["approved_by"] == "Evans"
+    assert "via Tuto" not in purpose
+    assert (
+        "deliberate adoption approved by Evans (named human; assignment: "
+        "requests/2026-11-08-from-nime-to-tuto-munu-onboarding.md)" in purpose
+    )
+    assert "agent guide/delegate: Tuto" in purpose
+    assert "sponsor: nime" in purpose
