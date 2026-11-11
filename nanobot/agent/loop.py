@@ -806,6 +806,13 @@ class AgentLoop:
             text, runtime_context_meta = append_runtime_context(
                 text,
                 runtime_context_blocks or (),
+                # S10-1: the block belongs to *this* session, not to the sender's
+                # prose. Naming the owner lets a reader (ingress, QA, webui)
+                # detach it and say whose backlog it was.
+                owner={
+                    "session": session.key,
+                    "handle": (session.metadata or {}).get("session_handle"),
+                },
             )
             if runtime_context_meta is not None:
                 extra[RUNTIME_CONTEXT_HISTORY_META] = runtime_context_meta

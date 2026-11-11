@@ -144,11 +144,19 @@ async def resolve_runtime_context(
 def append_runtime_context(
     content: Any,
     blocks: Sequence[RuntimeContextBlock],
+    owner: Mapping[str, Any] | None = None,
 ) -> tuple[Any, dict[str, Any] | None]:
-    """Append blocks and return a durable marker for exact display-time removal."""
+    """Append blocks and return a durable marker for exact display-time removal.
+
+    ``owner`` names whose context this is (handle + session key). It rides the
+    marker so a reader that detaches the block can say who it belonged to
+    instead of leaving the recipient's backlog looking like the sender's words
+    (S10-1, kevu register 2026-11-10).
+    """
     if not blocks:
         return content, None
 
+    owner_meta = dict(owner) if owner else None
     rendered = [block.content for block in blocks]
     sources = [block.source for block in blocks]
     if isinstance(content, list):
@@ -157,6 +165,7 @@ def append_runtime_context(
             "version": 1,
             "sources": sources,
             "blocks": context_blocks,
+            **({"owner": owner_meta} if owner_meta else {}),
         }
 
     text = "" if content is None else str(content)
@@ -166,6 +175,7 @@ def append_runtime_context(
         "version": 1,
         "sources": sources,
         "suffix": suffix,
+        **({"owner": owner_meta} if owner_meta else {}),
     }
 
 
