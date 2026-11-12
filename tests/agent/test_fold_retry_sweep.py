@@ -52,7 +52,8 @@ TID = "compact-websocket-retry-test-0001"
 def _write_session(sess_dir: Path, key: str, *, handle: str | None = "tester",
                    pending: bool = False, goodnight: str | None = None,
                    tail: list[dict] | None = None,
-                   archived: int = 0) -> Path:
+                   archived: int = 0,
+                   extra_meta: dict | None = None) -> Path:
     """A minimal session file: metadata line + one qualifying work line +
     optional tail lines (the delivered turn's evidence)."""
     day = sess_dir / "deadbeefcafe"
@@ -66,6 +67,8 @@ def _write_session(sess_dir: Path, key: str, *, handle: str | None = "tester",
         metadata["pending_user_turn"] = True
     if goodnight is not None:
         metadata["_last_goodnight"] = goodnight
+    if extra_meta:
+        metadata.update(extra_meta)
     rows = [json.dumps({
         "_type": "metadata", "key": key, "created_at": ts, "updated_at": ts,
         "metadata": metadata, "last_archived": archived,
@@ -359,3 +362,43 @@ def test_dry_run_arms_and_delivers_nothing(rig):
     assert _deliveries(rig["trig_dir"]) == []
     # the ledger on disk is untouched by the rehearsal
     assert _ledger(rig)[KEY]["attempts"] == 0
+
+
+def _pin_window(rig, window: int, preset: str = "testpin") -> None:
+    cfg = rig["sess_dir"].parent / "gateway-config.json"
+    cfg.write_text(json.dumps({
+        "modelPresets": {preset: {"contextWindowTokens": window}},
+        "agents": {"defaults": {"modelPreset": preset}},
+    }))
+
+
+def test_busy_gate_yields_to_context_pressure(rig):
+    """A session at nine tenths of its window gets the fold even if it wrote
+    a second ago: the fold outranks the work, and a wedged agent cannot run a
+    work turn anyway (nime, 2026-11-11 — three mornings lost to this)."""
+    _pin_window(rig, 1000)
+    path = _write_session(
+        rig["sess_dir"], KEY, pending=True,
+        extra_meta={"_nanobot_model_preset": "testpin",
+                    "_last_usage": {"context_tokens": 980}},
+    )
+    _arm(rig, path, reason="busy-skip")
+    r = rig["run"](retry=True)
+    assert r.returncode == 0, r.stderr
+    ds = _deliveries(rig["trig_dir"])
+    assert len(ds) == 1, "pressure must outrank the busy gate"
+    assert "busy gate overridden: pressure" in _sweep_log(rig)
+
+
+def test_busy_gate_yields_to_a_dead_turn(rig):
+    """pending_user_turn set with the file quiet for 20+ minutes is a turn
+    that died without an end; nothing will ever clear the flag, so the fold
+    must not wait on it forever."""
+    path = _write_session(rig["sess_dir"], KEY, pending=True)
+    _age(path, minutes=25)
+    _arm(rig, path, reason="busy-skip")
+    r = rig["run"](retry=True)
+    assert r.returncode == 0, r.stderr
+    ds = _deliveries(rig["trig_dir"])
+    assert len(ds) == 1, "a dead turn must not hold the fold shut"
+    assert "busy gate overridden: dead-turn" in _sweep_log(rig)
