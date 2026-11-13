@@ -129,6 +129,10 @@ class AgentRunResult:
     # produce that round's response are folded into the same usage value.
     round_usages: list[LLMUsage] = field(default_factory=list)
     stop_reason: str = "completed"
+    # The provider's own reason for the last response when it explains the stop
+    # (`length` for a truncated reply whose content ended blank, `content_filter`,
+    # and so on). Persisted with the turn so the record says why it stopped.
+    stop_detail: str | None = None
     error: str | None = None
     failure_error_kind: str | None = None
     tool_events: list[dict[str, str]] = field(default_factory=list)
@@ -383,6 +387,7 @@ class AgentRunner:
         error: str | None = None
         failure_error_kind: str | None = None
         stop_reason = "completed"
+        stop_detail: str | None = None
         tool_events: list[dict[str, str]] = []
         external_lookup_counts: dict[str, int] = {}
         # Per-turn throttle for repeated attempts against the same outside target.
@@ -741,6 +746,11 @@ class AgentRunner:
             if is_blank_text(clean):
                 final_content = EMPTY_FINAL_RESPONSE_MESSAGE
                 stop_reason = "empty_final_response"
+                # In hand here and nowhere else: a blank reply after truncation reads
+                # as a refusal in the transcript, and the finish reason is the only
+                # thing that distinguishes "the model said nothing" from "the model
+                # was cut off before it could."
+                stop_detail = response.finish_reason or None
                 error = final_content
                 self._append_final_message(messages, final_content)
                 context.final_content = final_content
@@ -833,6 +843,7 @@ class AgentRunner:
             usage=usage,
             round_usages=round_usages,
             stop_reason=stop_reason,
+            stop_detail=stop_detail,
             error=error,
             failure_error_kind=failure_error_kind,
             tool_events=tool_events,

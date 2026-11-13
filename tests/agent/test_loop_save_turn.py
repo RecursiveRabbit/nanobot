@@ -2231,3 +2231,55 @@ async def test_process_message_keeps_delivery_chat_for_thread_session(tmp_path: 
     assert result.chat_id == "thread-777"
     request = loop._run_agent_loop.call_args.kwargs["request_context"]
     assert request.chat_id == "thread-777"
+
+
+def test_save_turn_marks_an_empty_final_response_with_its_reason(tmp_path: Path) -> None:
+    """A failed turn must not read like a completed one.
+
+    The persisted sentence for an empty final response is the agent's own prose, so
+    the marker is the only thing in the record that says the turn did not finish.
+    """
+    from nanobot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
+
+    loop = _make_full_loop(tmp_path)
+    session = loop.sessions.get_or_create("websocket:empty-final")
+
+    loop._save_turn(
+        session,
+        [
+            {"role": "user", "content": "It's time for the fold."},
+            {"role": "assistant", "content": EMPTY_FINAL_RESPONSE_MESSAGE},
+        ],
+        0,
+        turn_latency_ms=157601,
+        stop_reason="empty_final_response",
+        stop_detail="length",
+    )
+
+    final = session.messages[-1]
+    assert final["content"] == EMPTY_FINAL_RESPONSE_MESSAGE
+    assert final["latency_ms"] == 157601
+    assert final["stop_reason"] == "empty_final_response"
+    assert final["stop_detail"] == "length"
+    # The marker belongs to the turn's last assistant message, not the prompt.
+    assert "stop_reason" not in session.messages[0]
+
+
+def test_save_turn_leaves_a_completed_turn_unmarked(tmp_path: Path) -> None:
+    """Absence of the marker means the ordinary completion; it is not a failure code."""
+    loop = _make_full_loop(tmp_path)
+    session = loop.sessions.get_or_create("websocket:completed")
+
+    loop._save_turn(
+        session,
+        [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "done"},
+        ],
+        0,
+        turn_latency_ms=1200,
+    )
+
+    assert session.messages[-1]["latency_ms"] == 1200
+    assert "stop_reason" not in session.messages[-1]
+    assert "stop_detail" not in session.messages[-1]

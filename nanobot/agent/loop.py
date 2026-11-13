@@ -159,6 +159,7 @@ class TurnContext:
     final_content: str | None = None
     all_messages: list[dict[str, Any]] = field(default_factory=list)
     stop_reason: str = ""
+    stop_detail: str | None = None
     failure_error_kind: str | None = None
     streamed_content: bool = False
 
@@ -2369,6 +2370,7 @@ class AgentLoop:
         ctx.summary_checkpoint = result.summary_checkpoint
         ctx.provider_compaction_applied = result.provider_compaction_applied
         ctx.stop_reason = result.stop_reason
+        ctx.stop_detail = result.stop_detail
         ctx.failure_error_kind = result.failure_error_kind
         if (
             ctx.kind is TurnKind.USER
@@ -2406,6 +2408,8 @@ class AgentLoop:
         self._save_turn(
             session, ctx.all_messages, ctx.save_skip,
             turn_latency_ms=ctx.turn_latency_ms,
+            stop_reason=ctx.stop_reason,
+            stop_detail=ctx.stop_detail,
             summary_checkpoint=ctx.summary_checkpoint,
             input_persisted_early=ctx.input_persisted_early,
         )
@@ -2513,6 +2517,8 @@ class AgentLoop:
         skip: int,
         *,
         turn_latency_ms: int | None = None,
+        stop_reason: str | None = None,
+        stop_detail: str | None = None,
         summary_checkpoint: SessionSummaryCheckpoint | None = None,
         input_persisted_early: bool = False,
     ) -> None:
@@ -2636,6 +2642,15 @@ class AgentLoop:
             session.commit_summary_checkpoint(summary_checkpoint.summary)
         if turn_latency_ms is not None and last_assistant_idx is not None:
             session.messages[last_assistant_idx]["latency_ms"] = int(turn_latency_ms)
+        if last_assistant_idx is not None and stop_reason and stop_reason != "completed":
+            # A turn that did not finish must not read like one that did. The text
+            # persisted for an empty final response is the agent's own sentence, so
+            # without this marker the transcript cannot tell a refusal from a
+            # failure — and a retry that reads it as completed backs off instead of
+            # retrying, which is the fold that never happened and said it had.
+            session.messages[last_assistant_idx]["stop_reason"] = stop_reason
+            if stop_detail:
+                session.messages[last_assistant_idx]["stop_detail"] = stop_detail
         if saved_followup_ids:
             acknowledge_pending_followups(session, saved_followup_ids)
         session.updated_at = datetime.now()
