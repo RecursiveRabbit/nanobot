@@ -1202,3 +1202,93 @@ async def test_runner_passes_reasoning_effort_to_provider():
     ))
 
     assert captured["reasoning_effort"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_runner_marks_a_reasoning_only_reply():
+    """Reasoning with no answer is a blank reply, and the marker says which kind.
+
+    A model that thinks and never speaks produces content that passes nothing —
+    but the reason it is empty is the reasoning channel, not a cut, and the
+    difference is what a reader needs.
+    """
+    from nanobot.agent.runner import AgentRunner
+
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_stream_with_retry = AsyncMock(return_value=LLMResponse(
+        content=None,
+        reasoning_content="Consider the row, then the reader.\nNow write… Let me write.",
+        finish_reason="stop",
+    ))
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+
+    runner = AgentRunner()
+    result = await runner.run(make_run_spec(provider,
+        initial_messages=[{"role": "user", "content": "answer the thread"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=3,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+    ))
+
+    assert result.stop_reason == "empty_final_response"
+    assert result.stop_detail == "reasoning_only"
+
+
+@pytest.mark.asyncio
+async def test_runner_marks_exhausted_length_recovery_as_truncated():
+    """A fragment that is not blank is still not an answer.
+
+    Four consecutive `length` responses exhaust the recovery budget. The tail is
+    real text — a plan — so the blank check cannot see the failure, and without
+    this the turn would be persisted as completed.
+    """
+    from nanobot.agent.runner import AgentRunner
+
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_stream_with_retry = AsyncMock(
+        return_value=LLMResponse(content="Now write the reply. Let me write.", finish_reason="length")
+    )
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+
+    runner = AgentRunner()
+    result = await runner.run(make_run_spec(provider,
+        initial_messages=[{"role": "user", "content": "answer the thread"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=10,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+    ))
+
+    assert result.stop_reason == "truncated"
+    assert result.stop_detail == "length"
+    assert "Let me write." in (result.final_content or "")
+    # One original response plus three recoveries, then the budget is spent.
+    assert provider.chat_stream_with_retry.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_runner_records_how_a_completed_turn_ended():
+    """A clean turn still records the provider's own word: stop, not a guess."""
+    from nanobot.agent.runner import AgentRunner
+
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_stream_with_retry = AsyncMock(
+        return_value=LLMResponse(content="done", finish_reason="stop")
+    )
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+
+    runner = AgentRunner()
+    result = await runner.run(make_run_spec(provider,
+        initial_messages=[{"role": "user", "content": "hello"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=3,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+    ))
+
+    assert result.stop_reason == "completed"
+    assert result.stop_detail == "stop"

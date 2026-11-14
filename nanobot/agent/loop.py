@@ -2649,8 +2649,12 @@ class AgentLoop:
             # failure — and a retry that reads it as completed backs off instead of
             # retrying, which is the fold that never happened and said it had.
             session.messages[last_assistant_idx]["stop_reason"] = stop_reason
-            if stop_detail:
-                session.messages[last_assistant_idx]["stop_detail"] = stop_detail
+        if last_assistant_idx is not None and stop_detail:
+            # The provider's own word for how the last response ended (`stop`,
+            # `length`, `content_filter`). Kept even on a completed turn: a reply that
+            # stops in the middle of a plan is non-blank and finishes cleanly, so this
+            # is the only field that can say the answer was cut rather than given.
+            session.messages[last_assistant_idx]["stop_detail"] = stop_detail
         if saved_followup_ids:
             acknowledge_pending_followups(session, saved_followup_ids)
         session.updated_at = datetime.now()

@@ -2283,3 +2283,31 @@ def test_save_turn_leaves_a_completed_turn_unmarked(tmp_path: Path) -> None:
     assert session.messages[-1]["latency_ms"] == 1200
     assert "stop_reason" not in session.messages[-1]
     assert "stop_detail" not in session.messages[-1]
+
+
+def test_save_turn_records_the_finish_detail_on_a_completed_turn(tmp_path: Path) -> None:
+    """`stop_detail` is kept even when nothing went wrong.
+
+    A reply that stops mid-plan is non-blank and finishes cleanly, so the only
+    thing that can say the answer was cut rather than given is the provider's own
+    word for how its last response ended.
+    """
+    loop = _make_full_loop(tmp_path)
+    session = loop.sessions.get_or_create("websocket:detail")
+
+    loop._save_turn(
+        session,
+        [
+            {"role": "user", "content": "answer the thread"},
+            {"role": "assistant", "content": "Now write the reply. Let me write."},
+        ],
+        0,
+        turn_latency_ms=41000,
+        stop_reason="completed",
+        stop_detail="stop",
+    )
+
+    final = session.messages[-1]
+    assert final["stop_detail"] == "stop"
+    # A completed turn carries the detail and no failure code.
+    assert "stop_reason" not in final

@@ -750,7 +750,18 @@ class AgentRunner:
                 # as a refusal in the transcript, and the finish reason is the only
                 # thing that distinguishes "the model said nothing" from "the model
                 # was cut off before it could."
-                stop_detail = response.finish_reason or None
+                #
+                # If the response carried reasoning and no answer, that is the more
+                # specific fact: the model thought and never spoke. Re-extracted from
+                # the current response because a retried attempt replaces it.
+                attempt_reasoning, _ = extract_reasoning(
+                    response.reasoning_content,
+                    response.thinking_blocks,
+                    original_content,
+                )
+                stop_detail = "reasoning_only" if attempt_reasoning else (
+                    response.finish_reason or None
+                )
                 error = final_content
                 self._append_final_message(messages, final_content)
                 context.final_content = final_content
@@ -767,6 +778,11 @@ class AgentRunner:
                     continue
                 break
 
+            # Every terminal response says how it ended, not only the failures. On a
+            # turn that otherwise looks complete, `stop` versus `length` is the fact
+            # that answers "did the model finish, or was it cut" — and it is the one
+            # fact this record did not keep.
+            stop_detail = response.finish_reason or stop_detail
             messages.append(
                 assistant_message
                 or conversation_state.project_response_message(
@@ -791,6 +807,12 @@ class AgentRunner:
                 },
             )
             if length_recovery_parts:
+                # Recovery budget exhausted with output already produced. What is
+                # persisted is a fragment of an answer, and because the fragment is
+                # not blank the blank check cannot see it — so without this the turn
+                # records as completed and the record says the reader was answered.
+                stop_reason = "truncated"
+                stop_detail = response.finish_reason or "length"
                 final_content = (
                     "".join(length_recovery_parts)
                     + _restore_outer_whitespace(clean or "", original_content)
