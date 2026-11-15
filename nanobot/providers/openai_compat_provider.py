@@ -117,6 +117,15 @@ _KIMI_SERVER_MANAGED_TEMPERATURE_MODELS: frozenset[str] = frozenset({
     "kimi-k2.6",
 })
 _DEEPSEEK_MULTIMODAL_MODELS: frozenset[str] = frozenset({
+    # V4.1-Flash is multimodal on the DeepSeek API, and the two older names
+    # currently route to it. A model missing from this set has its content
+    # forced to a string, so an image arrives as a filename and a size and
+    # nothing says the picture was dropped — which is how a resident with a
+    # camera spent a night measuring pixels with arithmetic. Adding a model
+    # here is a claim that it accepts images; see
+    # tests/providers/test_deepseek_multimodal_allowlist.py
+    "deepseek-flash",
+    "deepseek-v4-flash",
     "deepseek-v4-flash-vision-exp",
 })
 _TEXT_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
