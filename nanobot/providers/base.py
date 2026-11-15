@@ -83,6 +83,18 @@ class ToolCallRequest:
         runtime_name = cast(object, self.name)
         return isinstance(runtime_name, str) and bool(runtime_name)
 
+    def arguments_complete(self) -> bool:
+        """Whether this call's arguments survived parsing as an object.
+
+        Evidence, not a guess: ``parse_tool_arguments`` keeps malformed JSON as
+        the raw string it was given, so a stream cut mid-arguments arrives here
+        as ``str`` while a call whose arguments were fully received arrives as
+        ``dict`` (an arg-less call parses to ``{}``). The distinction exists so a
+        truncated response can be told from a complete one under
+        ``finish_reason="length"``, where the provider offers no other signal.
+        """
+        return self.has_valid_name() and isinstance(self.arguments, dict)
+
     def to_openai_tool_call(self) -> dict[str, Any]:
         """Serialize to an OpenAI-style tool_call payload."""
         arguments = (
@@ -602,10 +614,25 @@ class LLMResponse:
     @property
     def should_execute_tools(self) -> bool:
         """Tools execute only when has_tool_calls AND finish_reason is a tool-capable stop.
-        Blocks gateway-injected calls under ``refusal`` / ``content_filter`` / ``error`` (#3220)."""
+        Blocks gateway-injected calls under ``refusal`` / ``content_filter`` / ``error`` (#3220).
+
+        ``length`` is admitted when every call came back whole (2026-11-15). A
+        response truncated *after* emitting a parseable tool call has already done
+        usable work, and refusing it does not make the call go away: the runner's
+        length-recovery ladder then asks the model to continue prose it never
+        began, three times, and the turn ends blank. That is how lark sat 76 hours
+        and dova's fold died the same morning. The refusal argument that keeps
+        ``refusal``/``error`` blocked does not apply here — these are the model's
+        own calls, not gateway-injected ones. #3220's infinite loop is closed by
+        the runner's bound on consecutive truncated executions, not by this gate.
+        """
         if not self.has_tool_calls:
             return False
-        return self.finish_reason in ("tool_calls", "function_call", "stop")
+        if self.finish_reason in ("tool_calls", "function_call", "stop"):
+            return True
+        if self.finish_reason == "length":
+            return all(call.arguments_complete() for call in self.tool_calls)
+        return False
 
 
 @dataclass(frozen=True)

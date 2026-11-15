@@ -23,6 +23,15 @@ EMPTY_FINAL_RESPONSE_MESSAGE = (
     "Please try again or narrow the task."
 )
 
+# The other way a turn can end with nothing to say (2026-11-15). EMPTY above is a
+# statement about the model; this one is a statement about the cap, because the two
+# are not the same failure and only one of them is worth retrying unchanged.
+TRUNCATED_TOOL_CALL_MESSAGE = (
+    "I hit the output limit while sending a tool call, and the call was cut off "
+    "before it ran — nothing from it was executed. Retrying the step, or splitting "
+    "it into smaller ones, will get further."
+)
+
 FINALIZATION_RETRY_PROMPT = (
     "Please provide your response to the user based on the conversation above."
 )

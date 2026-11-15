@@ -53,6 +53,7 @@ from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.utils.prompt_templates import render_template
 from nanobot.utils.runtime import (
     EMPTY_FINAL_RESPONSE_MESSAGE,
+    TRUNCATED_TOOL_CALL_MESSAGE,
     build_budget_exhausted_finalization_message,
     build_finalization_retry_message,
     build_length_recovery_message,
@@ -70,6 +71,14 @@ _ARREARAGE_ERROR_MESSAGE = (
 _PERSISTED_MODEL_ERROR_PLACEHOLDER = "[Assistant reply unavailable due to model error.]"
 _MAX_EMPTY_RETRIES = 2
 _MAX_LENGTH_RECOVERIES = 3
+
+# How many times one turn may execute a tool call that arrived under
+# ``finish_reason="length"`` (2026-11-15). #3220's guard exists because a gateway
+# injecting tool calls under an anomalous finish reason produced an infinite empty
+# tool-call loop; this bound keeps that guard's purpose while still letting a
+# truncated-but-whole call do its work. After this many, the turn ends with a
+# sentence naming the cap instead of executing again.
+_MAX_LENGTH_TOOL_CALL_EXECUTIONS = 3
 _MAX_INJECTIONS_PER_TURN = 3
 _MAX_INJECTION_CYCLES = 5
 
@@ -396,6 +405,9 @@ class AgentRunner:
         # Segments from one uninterrupted length-recovery chain. Tool work or
         # injected user input starts a new logical answer and clears the chain.
         length_recovery_parts: list[str] = []
+        # Consecutive tool calls executed under a truncated response. Bounded so
+        # #3220's infinite loop cannot come back through the length path.
+        length_tool_executions = 0
         had_injections = False
         injection_cycles = 0
         pending_stream_content: str | None = None
@@ -493,7 +505,11 @@ class AgentRunner:
                 await hook.emit_reasoning_end()
                 context.streamed_reasoning = True
 
-            if response.should_execute_tools:
+            executes_tools = response.should_execute_tools and (
+                response.finish_reason != "length"
+                or length_tool_executions < _MAX_LENGTH_TOOL_CALL_EXECUTIONS
+            )
+            if executes_tools:
                 context.tool_calls = list(response.tool_calls)
                 if hook.wants_streaming():
                     await hook.on_stream_end(context, resuming=True)
@@ -580,6 +596,13 @@ class AgentRunner:
                 )
                 empty_content_retries = 0
                 length_recovery_parts.clear()
+                if response.finish_reason == "length":
+                    # Counted, never reset here: the bound is on *consecutive*
+                    # truncated executions. A response that finished normally
+                    # starts a fresh allowance.
+                    length_tool_executions += 1
+                else:
+                    length_tool_executions = 0
                 # Checkpoint 1: drain injections after tools, before next LLM call
                 _drained, injection_cycles = await self._try_drain_injections(
                     spec, messages, None, injection_cycles,
@@ -640,7 +663,14 @@ class AgentRunner:
                 original_content = response.content
                 clean = hook.finalize_content(context, response.content)
 
-            if response.finish_reason == "length":
+            if response.finish_reason == "length" and not response.has_tool_calls:
+                # A truncated response that carried a tool call never takes this
+                # ladder. LENGTH_RECOVERY_PROMPT asks the model to continue text it
+                # never began, so it re-emits the same call, three times, and the
+                # turn ends blank — lark's 76 hours of folds and dova's fold, both
+                # 2026-11-15. A call whose arguments were whole is executed by
+                # should_execute_tools and never reaches here; one whose arguments
+                # were cut off ends the turn in the branch below, naming the cap.
                 if len(length_recovery_parts) < _MAX_LENGTH_RECOVERIES:
                     length_recovery_parts.append(
                         _restore_outer_whitespace(clean or "", original_content)
@@ -742,6 +772,34 @@ class AgentRunner:
                     length_recovery_parts.clear()
                     continue
                 failure_error_kind = LLMProvider.public_error_kind(response)
+                break
+            if response.finish_reason == "length" and response.has_tool_calls:
+                # Truncated while emitting a tool call, and the call did not survive
+                # parsing (a whole one is executed above and never gets here).
+                # "I couldn't produce a final answer" would be true about the wrong
+                # thing: the model did produce one thing — a tool call — and the cap
+                # cut it short. Naming the cap is also what tells the next reader of
+                # the record that repeating the same prompt is not the cure, which
+                # is the sentence the context audit needed and did not have.
+                final_content = (
+                    "".join(length_recovery_parts) + TRUNCATED_TOOL_CALL_MESSAGE
+                ).strip()
+                stop_reason = "truncated_tool_call"
+                stop_detail = response.finish_reason or "length"
+                error = final_content
+                self._append_final_message(messages, final_content)
+                context.final_content = final_content
+                context.error = error
+                context.stop_reason = stop_reason
+                await hook.after_iteration(context)
+                should_continue, injection_cycles = await self._try_drain_injections(
+                    spec, messages, None, injection_cycles,
+                    phase="after truncated tool call",
+                )
+                if should_continue:
+                    had_injections = True
+                    length_recovery_parts.clear()
+                    continue
                 break
             if is_blank_text(clean):
                 final_content = EMPTY_FINAL_RESPONSE_MESSAGE

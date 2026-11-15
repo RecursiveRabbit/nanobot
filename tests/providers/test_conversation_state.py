@@ -311,7 +311,12 @@ def test_terminal_response_discards_candidate_state(
         provider_state=candidate,
     )
     assert response.has_tool_calls is exposes_tool_call
-    assert response.should_execute_tools is False
+    # The gate is not this row's subject, and it moved for `length` on 2026-11-15:
+    # a truncated response whose tool call arrived whole is executable now (bounded
+    # in the runner). What this row tests — that a terminal response discards the
+    # candidate provider state — is unaffected either way.
+    if finish_reason != "length":
+        assert response.should_execute_tools is False
 
     controller.observe_response(response, messages)
 

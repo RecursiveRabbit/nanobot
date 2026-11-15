@@ -336,25 +336,50 @@ async def test_runner_preserves_tool_error_results_in_messages():
 
 @pytest.mark.asyncio
 async def test_length_finish_with_blank_content_routes_to_length_recovery():
-    """Regression test for #5133.
+    """Regression test for #5133, re-pointed 2026-11-15.
 
-    A response with finish_reason='length' and blank content (e.g. the model
-    spent its whole output budget on a tool call whose closing tag was
-    truncated) must take the length-recovery path, not the empty-response
-    retry path. Retrying the same prompt cannot recover from output-budget
-    exhaustion.
+    #5133's protection is kept: a response that exhausted the output budget must
+    not fall into the empty-response retry loop, because retrying the same prompt
+    cannot recover a cap.
+
+    What changed is the statement of how it recovers. This row used to assert a
+    length-recovery prompt for *any* blank response carrying a tool call, and its
+    fixture passed ``arguments={}`` — which does not model a truncated call at all,
+    it models a complete argument-less one. Under the tool-call gate the desk asked
+    for (lark's 76 hours, dova's fold, 2026-11-15), a call whose arguments arrived
+    whole is executed instead of being dropped and then apologised for. So this row
+    now models the truncation its docstring always claimed: arguments cut mid-JSON,
+    which ``parse_tool_arguments`` keeps as the raw string. The turn ends naming
+    the cap, and still never enters the empty-retry loop.
+
+    The complete-call half lives in
+    ``tests/agent/test_runner_length_tool_calls.py``.
     """
     from nanobot.agent.runner import AgentRunner
-    from nanobot.utils.runtime import LENGTH_RECOVERY_PROMPT
+    from nanobot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE, TRUNCATED_TOOL_CALL_MESSAGE
+
+    # Revert evidence, run 2026-11-15 at the desk's request ("give me the revert",
+    # so the proof is a red and not a reading of the diff). With the terminal
+    # branch and the ladder guard removed, this row fails:
+    #
+    #   assert 'truncated' == 'truncated_tool_call'
+    #   WARNING  Ignoring tool calls under finish_reason='length'
+    #   INFO     Output truncated on turn 0 for default (1/3); continuing
+    #
+    # — the cut call dropped, the prose-continuation ladder entered, the turn
+    # labelled 'truncated' because the fixture's next response happened to be a
+    # clean stop. The empty-retry count stayed at 1, which is #5133's protection and
+    # the reason this row is not about that loop any more.
 
     provider = MagicMock(spec=LLMProvider)
-    # First call: truncated (length) with blank content and a dropped tool call.
-    # Second call: normal completion so the loop can terminate.
+    # First call: truncated (length) with blank content and a tool call whose
+    # arguments were cut off mid-JSON. Second call: normal completion, present so
+    # a regression that reaches for another request is visible in the count.
     provider.chat_stream_with_retry = AsyncMock(side_effect=[
         LLMResponse(
             content="",
             finish_reason="length",
-            tool_calls=[ToolCallRequest(id="call_1", name="exec", arguments={})],
+            tool_calls=[ToolCallRequest(id="call_1", name="exec", arguments='{"command": "echo hel')],
             usage=None,
         ),
         LLMResponse(content="done", finish_reason="stop", tool_calls=[], usage=None),
@@ -371,11 +396,9 @@ async def test_length_finish_with_blank_content_routes_to_length_recovery():
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
     ))
 
-    # The runner must have injected a length-recovery prompt and continued,
-    # rather than exhausting empty-response retries into a generic apology.
-    user_msgs = [m.get("content") or "" for m in result.messages if m.get("role") == "user"]
-    assert any(LENGTH_RECOVERY_PROMPT in c for c in user_msgs), (
-        "expected a length-recovery message to be appended for a "
-        "finish_reason='length' response with blank content"
-    )
-    assert result.final_content == "done"
+    # Not the empty-retry path, and not a plain apology: a sentence about the cap.
+    assert result.stop_reason == "truncated_tool_call"
+    assert TRUNCATED_TOOL_CALL_MESSAGE in (result.final_content or "")
+    assert result.final_content != EMPTY_FINAL_RESPONSE_MESSAGE
+    # And it did not spend three rounds asking prose to continue a tool call.
+    assert provider.chat_stream_with_retry.await_count == 1
