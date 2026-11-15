@@ -10,12 +10,14 @@ import os
 import time
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import Field
 
 from nanobot.bus.events import OutboundMessage
+from nanobot.utils.house_time import house_time
 from nanobot.bus.outbound_events import ContextCompactionEvent, ProgressEvent
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
@@ -39,6 +41,21 @@ if DISCORD_AVAILABLE:
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024  # 20MB
 MAX_MESSAGE_LEN = 2000  # Discord message character limit
 TYPING_INTERVAL_S = 8
+
+
+def _house_time(created_at: object) -> str | None:
+    """An inbound message's time, in the house's zone, never UTC.
+
+    Discord hands us a UTC-aware datetime. The header renders ``[:19]`` of it,
+    which drops the offset — so a UTC stamp comes out looking exactly like a
+    local one. 2026-11-14/15: every message a resident received was stamped in
+    UTC and read as local, and she told the patron to go to bed at eight in the
+    morning when it was three. Eastern is house law (Evans 2026-10-05, no
+    compromise): produced by us, it is Eastern.
+    """
+    if not isinstance(created_at, datetime):
+        return None
+    return house_time(created_at)
 
 
 def _route_state_path() -> Path:
@@ -1015,7 +1032,7 @@ class DiscordChannel(BaseChannel):
             "reply_to_author": reply_author,
             "reply_to_excerpt": reply_excerpt,
             "mentions": mentions or None,
-            "timestamp": created_at.isoformat() if created_at else None,
+            "timestamp": _house_time(created_at),
         }
 
     @staticmethod

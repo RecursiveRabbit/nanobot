@@ -9,7 +9,9 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
+
+from nanobot.utils.house_time import house_time
 from typing import Any, cast
 
 import httpx
@@ -102,7 +104,7 @@ def _make_synthetic_event(
         payload["authorInfo"] = _safe_dict(author_info)
     return {
         "type": "message.add",
-        "timestamp": timestamp or datetime.utcnow().isoformat(),  # pyright: ignore[reportDeprecated]
+        "timestamp": timestamp or house_time(datetime.now(UTC)),  # pyright: ignore[reportDeprecated]
         "payload": payload,
     }
 
@@ -940,7 +942,7 @@ class MochatChannel(BaseChannel):
             self._state_dir.mkdir(parents=True, exist_ok=True)
             self._cursor_path.write_text(json.dumps({
                 "schemaVersion": 1,
-                "updatedAt": datetime.utcnow().isoformat(),  # pyright: ignore[reportDeprecated]
+                "updatedAt": house_time(datetime.now(UTC)),  # pyright: ignore[reportDeprecated]
                 "cursors": self._session_cursor,
             }, ensure_ascii=False, indent=2) + "\n", "utf-8")
         except Exception as e:

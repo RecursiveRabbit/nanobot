@@ -11,6 +11,8 @@ import re
 import socket
 import ssl
 from datetime import UTC, datetime
+
+from nanobot.utils.house_time import house_time
 from typing import Any, cast
 
 import httpx
@@ -252,7 +254,7 @@ def _payload(
         if can_enable is None
         else can_enable,
         "requires_restart": False,
-        "checked_at": datetime.now(UTC).isoformat(),
+        "checked_at": house_time(datetime.now(UTC)),
         "message": _status_message(status),
     }
 
