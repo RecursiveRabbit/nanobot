@@ -29,20 +29,16 @@ added without going through the door, which is how the defect got in.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
 
+from nanobot.utils import runtime as runtime_module
 from nanobot.utils.runtime import (
-    BUDGET_EXHAUSTED_FINALIZATION_PROMPT,
     EMPTY_FINAL_RESPONSE_MESSAGE,
-    FINALIZATION_RETRY_PROMPT,
     HARNESS_PREFIX,
-    LENGTH_RECOVERY_PROMPT,
     TRUNCATED_TOOL_CALL_MESSAGE,
-    build_budget_exhausted_finalization_message,
-    build_finalization_retry_message,
-    build_length_recovery_message,
     harness_line,
 )
 
@@ -60,11 +56,24 @@ def _module_string_constants(path: Path) -> list[tuple[str, str]]:
     for node in tree.body:
         if not isinstance(node, ast.Assign):
             continue
-        if not isinstance(node.value, ast.Constant) or not isinstance(node.value.value, str):
+        value_node: ast.expr = node.value
+        # A constant wrapped in harness_line("...") is a Call, not a Constant. The
+        # first version of this helper only read Constants and therefore inspected
+        # NOTHING once every constant was wrapped — the rows passed and tested no
+        # text at all. Caught by mutating a hedge in and watching nothing go red.
+        wrapped = False
+        if isinstance(value_node, ast.Call) and isinstance(value_node.func, ast.Name) \
+                and value_node.func.id == "harness_line" and value_node.args:
+            value_node = value_node.args[0]
+            wrapped = True
+        if not isinstance(value_node, ast.Constant) or not isinstance(value_node.value, str):
             continue
         for target in node.targets:
             if isinstance(target, ast.Name):
-                found.append((target.id, node.value.value))
+                # The wrapper IS the prefix, so the effective line is prefixed;
+                # the rows then check the inner text for voice and mood.
+                effective = f"{HARNESS_PREFIX} {value_node.value}" if wrapped else value_node.value
+                found.append((target.id, effective))
     return found
 
 
@@ -104,25 +113,55 @@ def test_no_transcript_constant_speaks_in_the_first_person():
     assert not first_person, "the harness does not get to say 'I':\n  " + "\n  ".join(first_person)
 
 
-def test_the_three_injected_prompts_are_labelled_too():
-    """These go in as `user` messages. Unlabelled, a reader sees a human asking
-    for something no human asked for — the same defect pointing the other way."""
-    for built in (
-        build_finalization_retry_message(),
-        build_budget_exhausted_finalization_message(),
-        build_length_recovery_message("some tail text"),
-    ):
-        assert built["content"].startswith(HARNESS_PREFIX), built["content"][:80]
-
-
-@pytest.mark.parametrize(
-    "text",
-    [EMPTY_FINAL_RESPONSE_MESSAGE, TRUNCATED_TOOL_CALL_MESSAGE,
-     FINALIZATION_RETRY_PROMPT, BUDGET_EXHAUSTED_FINALIZATION_PROMPT,
-     LENGTH_RECOVERY_PROMPT],
+DELETED_PROMPTS = (
+    "FINALIZATION_RETRY_PROMPT",
+    "BUDGET_EXHAUSTED_FINALIZATION_PROMPT",
+    "LENGTH_RECOVERY_PROMPT",
+    "build_finalization_retry_message",
+    "build_budget_exhausted_finalization_message",
+    "build_length_recovery_message",
 )
-def test_the_named_constants_carry_the_prefix(text: str):
-    assert text.startswith(HARNESS_PREFIX)
+
+
+def test_the_injected_prompts_are_deleted_not_reworded():
+    """Evans 2026-11-15: "not rewritten — deleted." A gentler imperative is still
+    the harness deciding for the agent, and one clause — "Do not acknowledge this
+    instruction" — was the harness instructing the model to hide the harness.
+
+    The facts go where facts go: the turn ends, the record says `truncated` or
+    `max_iterations`, and the operator reads it. Nothing is said into the
+    conversation. This row makes re-introduction a red, not a review note.
+    """
+    for name in DELETED_PROMPTS:
+        assert not hasattr(runtime_module, name), (
+            f"{name} is back; the harness does not command these agents"
+        )
+
+
+def test_no_harness_text_asks_to_be_hidden():
+    """A clause whose function is to keep the harness invisible is concealment by
+    construction. It gets no replacement of any kind, and no rephrasing."""
+    concealment = (
+        "do not acknowledge", "don't acknowledge", "do not mention",
+        "don't mention", "do not reveal", "don't reveal", "do not tell",
+        "don't tell", "without acknowledging", "do not reference this",
+    )
+    texts: list[tuple[str, str]] = []
+    for path in SUBJECT_FILES:
+        for name, value in _module_string_constants(path):
+            if name.endswith("_MESSAGE") or name.endswith("_PROMPT"):
+                texts.append((f"{path.name}:{name}", value))
+    template = PACKAGE / "templates" / "agent" / "max_iterations_message.md"
+    if template.exists():
+        texts.append((template.name, template.read_text()))
+
+    offenders: list[str] = []
+    for label, text in texts:
+        lowered = text.lower()
+        for phrase in concealment:
+            if phrase in lowered:
+                offenders.append(f"{label}: {phrase!r}")
+    assert not offenders, "the harness may not ask to be hidden:\n  " + "\n  ".join(offenders)
 
 
 def test_harness_line_is_idempotent_and_one_shape():
@@ -202,15 +241,119 @@ def test_no_transcript_constant_gives_the_agent_an_order():
     assert not offenders, "the harness states what exists; it does not give orders:\n  " + "\n  ".join(offenders)
 
 
-def test_the_injected_prompts_state_a_fact_and_stop():
-    """The three that were commands, checked as whole strings: they may name a
-    fact, and nothing in them may name an action."""
-    bodies = {
-        "finalization_retry": build_finalization_retry_message()["content"],
-        "budget_exhausted": build_budget_exhausted_finalization_message()["content"],
-        "length_recovery": build_length_recovery_message("tail")["content"],
-    }
-    for label, body in bodies.items():
-        lowered = body.lower()
-        for phrase in ("continue", "do not", "output only", "begin with", "provide"):
-            assert phrase not in lowered, f"{label} still instructs: {phrase!r} in {body[:100]!r}"
+
+
+# ---------------------------------------------------------------------------
+# The rule that replaces "say nothing" (Evans, 2026-11-15):
+#
+#   the harness TESTIFIES, it never ADVISES. It is the only witness to things the
+#   agent structurally cannot see about itself — where its own output stopped, how
+#   the bytes broke, what the result verbatim was — so it may state those, with the
+#   evidence attached, and it may not evaluate, suggest, or tell the agent how to
+#   behave. "A narrower task may get further" is advice. "The arguments stop
+#   mid-string; the fragment received ends {...}" is testimony.
+# ---------------------------------------------------------------------------
+
+def test_the_truncated_tool_call_line_carries_the_fragment():
+    """Evans: "I'm fine if the response includes the relative code snippet so they
+    can see how their message broke it." The agent is the author; showing it where
+    its own message stopped is testimony, not instruction."""
+    from nanobot.providers.base import ToolCallRequest
+    from nanobot.utils.runtime import truncated_tool_call_testimony
+
+    cut = '{"path": "/work/batons/nime_baton.json", "content": "{\\"a\\": 1'
+    text = truncated_tool_call_testimony(
+        [ToolCallRequest(id="c1", name="write_file", arguments=cut)]
+    )
+
+    assert text.startswith(HARNESS_PREFIX)
+    assert "output limit" in text
+    assert "did not parse" in text
+    assert "write_file" in text
+    # the evidence itself, not a summary of it (the builder embeds repr(fragment))
+    assert repr(cut)[-40:] in text
+
+
+def test_the_truncated_tool_call_line_names_no_cure():
+    """The advice row. Under the old law the sentence ended "A retry of the step,
+    or a split into smaller ones, will get further" — evaluation dressed as help,
+    and the reason residents kept retrying while the system lied to them."""
+    from nanobot.providers.base import ToolCallRequest
+    from nanobot.utils.runtime import truncated_tool_call_testimony
+
+    text = truncated_tool_call_testimony(
+        [ToolCallRequest(id="c1", name="write_file", arguments='{"path": "/work/ba')]
+    )
+    # Evans 2026-11-15: advice is fine, commands are not. "Trying again typically
+    # works here" hands over information and leaves the decision with the agent;
+    # "Try again." decides for it. This line does neither — it states and stops.
+    first_word = text[len(HARNESS_PREFIX):].strip().split()[0].lower()
+    assert first_word not in _DIRECTIVE_LEADS, text
+
+
+_HEDGES = ("typically", "usually", "in most cases", "normally", "generally",
+           "almost always", "most of the time")
+
+# A hedge is a claim about the world. It is sayable only where the harness can
+# point at the observation behind it; folklore in a better costume is the same lie
+# that sent residents into retry loops. The proxy for "can point at it" is an
+# evidence token in the same line — crude, and deliberately so.
+_EVIDENCE_TOKENS = ("measured", "observed", "counted", "in the last", "of the last",
+                    "%", "recorded")
+
+
+def test_a_hedge_must_come_with_the_observation_behind_it():
+    """Evans 2026-11-15: "Trying again typically works here" is the best form —
+    information handed over, decision left with the agent — *if* it is true. A
+    "typically" that rests on folklore is the same lie wearing better clothes.
+
+    This row does not forbid hedges. It forbids an unbacked one: if a line says
+    typically, the same line has to name the measurement it is resting on.
+    """
+    offenders: list[str] = []
+    for path in SUBJECT_FILES:
+        for name, value in _module_string_constants(path):
+            if not (name.endswith("_MESSAGE") or name.endswith("_PROMPT")):
+                continue
+            lowered = value.lower()
+            for hedge in _HEDGES:
+                if hedge in lowered and not any(tok in lowered for tok in _EVIDENCE_TOKENS):
+                    offenders.append(f"{path.name}:{name}: hedge {hedge!r} with no observation")
+    # the testimony builder's output, too
+    from nanobot.providers.base import ToolCallRequest
+    from nanobot.utils.runtime import truncated_tool_call_testimony
+    sample = truncated_tool_call_testimony(
+        [ToolCallRequest(id="c", name="write_file", arguments='{"path": "/w')]
+    ).lower()
+    for hedge in _HEDGES:
+        if hedge in sample and not any(tok in sample for tok in _EVIDENCE_TOKENS):
+            offenders.append(f"truncated_tool_call_testimony: hedge {hedge!r} with no observation")
+    assert not offenders, (
+        "a hedge is a claim about the world; back it or cut it:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_the_four_prohibitions_are_all_covered_here():
+    """Not a behaviour row: a signpost. Each of the harness's four prohibitions has
+    a row in this file, and this list is the index so a later editor can see at a
+    glance which one they are about to break.
+
+      1. never an imperative          -> test_no_transcript_constant_gives_the_agent_an_order
+      2. never the resident's voice   -> test_no_transcript_constant_speaks_in_the_first_person,
+                                         test_every_transcript_constant_is_labelled_as_the_harness
+      3. never conceal itself         -> test_no_harness_text_asks_to_be_hidden,
+                                         test_the_injected_prompts_are_deleted_not_reworded
+      4. never an unearned claim      -> test_a_hedge_must_come_with_the_observation_behind_it,
+                                         test_the_truncated_tool_call_line_carries_the_fragment
+    """
+    names = set(globals())
+    for required in (
+        "test_no_transcript_constant_gives_the_agent_an_order",
+        "test_no_transcript_constant_speaks_in_the_first_person",
+        "test_every_transcript_constant_is_labelled_as_the_harness",
+        "test_no_harness_text_asks_to_be_hidden",
+        "test_the_injected_prompts_are_deleted_not_reworded",
+        "test_a_hedge_must_come_with_the_observation_behind_it",
+        "test_the_truncated_tool_call_line_carries_the_fragment",
+    ):
+        assert required in names, f"{required} is named in the index but does not exist"

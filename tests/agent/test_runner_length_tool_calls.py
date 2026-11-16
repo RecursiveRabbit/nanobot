@@ -78,7 +78,6 @@ def whole_finish_is_executable(call: ToolCallRequest) -> bool:
 async def test_a_truncated_response_with_a_whole_tool_call_executes_it():
     """Row 1. The call is usable, so the ladder must not throw it away."""
     from nanobot.agent.runner import AgentRunner
-    from nanobot.utils.runtime import LENGTH_RECOVERY_PROMPT
 
     provider = MagicMock(spec=LLMProvider)
     provider.chat_stream_with_retry = AsyncMock(side_effect=[
@@ -101,11 +100,9 @@ async def test_a_truncated_response_with_a_whole_tool_call_executes_it():
     ))
 
     tools.execute.assert_awaited_once()
-    user_text = " ".join(
-        m.get("content") or "" for m in result.messages if m.get("role") == "user"
-    )
-    assert LENGTH_RECOVERY_PROMPT not in user_text, (
-        "a truncated tool call must not be answered with a prose-continuation prompt"
+    user_msgs = [m.get("content") or "" for m in result.messages if m.get("role") == "user"]
+    assert user_msgs == ["read the baton"], (
+        "the harness must inject nothing into the conversation (Evans 2026-11-15)"
     )
     assert result.final_content == "read it, done"
     assert result.stop_reason == "completed"  # the runner maps a clean stop
@@ -138,19 +135,28 @@ async def test_a_truncated_response_with_a_cut_tool_call_names_the_cap():
     tools.execute.assert_not_awaited()
     assert result.stop_reason == "truncated_tool_call"
     assert result.stop_detail == "length"
-    assert TRUNCATED_TOOL_CALL_MESSAGE in (result.final_content or "")
-    assert "output limit" in (result.final_content or "")
-    assert result.final_content != EMPTY_FINAL_RESPONSE_MESSAGE
+    # Placement (Evans 2026-11-15): the fact about the call is in the call's result,
+    # and the assistant's channel says nothing.
+    assert result.final_content == ""
+    tool_text = " ".join(
+        m.get("content") or "" for m in result.messages if m.get("role") == "tool"
+    )
+    assert TRUNCATED_TOOL_CALL_MESSAGE in tool_text
+    assert "output limit" in tool_text
     # The prose ladder never ran: no continuation prompt, and no three-round retry.
     assert provider.chat_stream_with_retry.await_count == 1
 
 
 @pytest.mark.asyncio
-async def test_a_truncated_response_with_text_still_takes_the_ladder():
-    """Row 3, the control. Prose truncation is what the ladder is for and it must
-    not regress — if this row ever fails, the fix went too wide."""
+async def test_a_truncated_response_with_text_ends_the_turn_at_the_cap():
+    """Row 3, the control — and it is a different control than it used to be.
+
+    Prose truncation used to be the ladder's territory: append the partial text,
+    inject a continuation prompt, loop. That prompt is deleted (Evans 2026-11-15),
+    so the control is now that the turn ENDS: the text produced is returned, the
+    record says `truncated` / `length`, and nothing is said into the conversation.
+    """
     from nanobot.agent.runner import AgentRunner
-    from nanobot.utils.runtime import LENGTH_RECOVERY_PROMPT
 
     provider = MagicMock(spec=LLMProvider)
     provider.chat_stream_with_retry = AsyncMock(side_effect=[
@@ -167,12 +173,14 @@ async def test_a_truncated_response_with_text_still_takes_the_ladder():
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
     ))
 
-    user_text = " ".join(
-        m.get("content") or "" for m in result.messages if m.get("role") == "user"
+    assert result.final_content == "first part"
+    assert result.stop_reason == "truncated"
+    assert result.stop_detail == "length"
+    assert provider.chat_stream_with_retry.await_count == 1, "no continuation round"
+    user_msgs = [m.get("content") or "" for m in result.messages if m.get("role") == "user"]
+    assert user_msgs == ["give a long answer"], (
+        "the harness injected a continuation prompt; it is deleted, not reworded"
     )
-    assert LENGTH_RECOVERY_PROMPT in user_text
-    assert result.final_content == "first part second part"
-    assert provider.chat_stream_with_retry.await_count == 2
 
 
 # Row 4, the mutation, run by hand on 2026-11-15 rather than committed as a test
@@ -240,7 +248,10 @@ async def test_the_3220_injection_terminates_at_the_bound_and_never_reexecutes()
     )
     # The turn ended because of the cap, not because it ran out of iterations.
     assert result.stop_reason == "truncated_tool_call", result.stop_reason
-    assert TRUNCATED_TOOL_CALL_MESSAGE in (result.final_content or "")
+    tool_text = " ".join(
+        m.get("content") or "" for m in result.messages if m.get("role") == "tool"
+    )
+    assert TRUNCATED_TOOL_CALL_MESSAGE in tool_text
     # One request per execution plus the one that hit the cap: it never loops the
     # ladder either, so there is no second road back into another request.
     assert provider.chat_stream_with_retry.await_count == bound + 1
@@ -287,6 +298,9 @@ async def test_the_bound_terminates_the_loop_3220_was_blocking():
         f"expected exactly {limit} executions, got {tools.execute.await_count}"
     )
     assert result.stop_reason == "truncated_tool_call"
-    assert TRUNCATED_TOOL_CALL_MESSAGE in (result.final_content or "")
+    tool_text = " ".join(
+        m.get("content") or "" for m in result.messages if m.get("role") == "tool"
+    )
+    assert TRUNCATED_TOOL_CALL_MESSAGE in tool_text
     # It terminated well before the iteration budget: the bound is what stopped it.
     assert provider.chat_stream_with_retry.await_count <= limit + 1

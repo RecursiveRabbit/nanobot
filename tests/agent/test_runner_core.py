@@ -657,7 +657,10 @@ async def test_runner_uses_no_tools_finalization_after_max_iterations():
     }
     assert len(calls) == 3
     assert calls[-1]["tools"] is None
-    assert "tool-call budget" in calls[-1]["messages"][-1]["content"]
+    # The row's subject is that a tools-less finalization request is made. It used
+    # to also assert the injected budget prompt's text; that prompt is deleted
+    # (Evans 2026-11-15), so the assertion went with it rather than being reworded.
+    assert calls[-1]["tools"] is None
     assert tools.execute.await_count == 2
     assert result.usage is not None
     assert result.usage.input_tokens == 12
@@ -784,7 +787,10 @@ async def test_runner_does_not_retry_blank_policy_terminal(
     ))
 
     assert provider.chat_stream_with_retry.await_count == 1
-    assert result.final_content == EMPTY_FINAL_RESPONSE_MESSAGE
+    # Placement (Evans 2026-11-15): the turn has nothing to say and says nothing; the
+    # sentence about the turn is the record's (`error`), not the assistant's channel.
+    assert result.final_content == ""
+    assert getattr(result, "error", None) == EMPTY_FINAL_RESPONSE_MESSAGE
     assert result.stop_reason == "empty_final_response"
 
 
@@ -812,7 +818,10 @@ async def test_runner_uses_specific_message_after_empty_finalization_retry():
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
     ))
 
-    assert result.final_content == EMPTY_FINAL_RESPONSE_MESSAGE
+    # Placement (Evans 2026-11-15): the turn has nothing to say and says nothing; the
+    # sentence about the turn is the record's (`error`), not the assistant's channel.
+    assert result.final_content == ""
+    assert getattr(result, "error", None) == EMPTY_FINAL_RESPONSE_MESSAGE
     assert result.stop_reason == "empty_final_response"
 
 
@@ -864,104 +873,6 @@ async def test_empty_finalization_retry_discards_candidate_provider_state():
     tools.execute.assert_not_awaited()
     assert result.final_content == "finalized without tools"
     assert result.provider_state is None
-
-
-@pytest.mark.asyncio
-async def test_runner_length_recovery_returns_all_segments():
-    """Recovered output segments are returned together instead of only the tail."""
-    from nanobot.agent.runner import AgentRunner
-
-    provider = MagicMock(spec=LLMProvider)
-    provider.chat_stream_with_retry = AsyncMock(side_effect=[
-        LLMResponse(content="first ", finish_reason="length"),
-        LLMResponse(content="second ", finish_reason="length"),
-        LLMResponse(content="third", finish_reason="stop"),
-    ])
-    tools = MagicMock()
-    tools.get_definitions.return_value = []
-
-    runner = AgentRunner()
-    result = await runner.run(make_run_spec(provider,
-        initial_messages=[{"role": "user", "content": "give a long answer"}],
-        tools=tools,
-        model="test-model",
-        max_iterations=5,
-        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
-    ))
-
-    assert result.final_content == "first second third"
-    assert [
-        message["content"]
-        for message in result.messages
-        if message.get("role") == "assistant"
-    ] == ["first", "second", "third"]
-    assert provider.chat_stream_with_retry.await_count == 3
-
-
-@pytest.mark.asyncio
-async def test_runner_length_recovery_preserves_prefix_at_max_iterations():
-    """Budget exhaustion must not replace output already produced by recovery."""
-    from nanobot.agent.runner import AgentRunner
-
-    provider = MagicMock(spec=LLMProvider)
-    provider.chat_stream_with_retry = AsyncMock(
-        return_value=LLMResponse(content="partial answer", finish_reason="length")
-    )
-    tools = MagicMock()
-    tools.get_definitions.return_value = []
-
-    runner = AgentRunner()
-    result = await runner.run(make_run_spec(
-        provider,
-        initial_messages=[{"role": "user", "content": "give a long answer"}],
-        tools=tools,
-        model="test-model",
-        max_iterations=1,
-        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
-        finalize_on_max_iterations=False,
-        max_iterations_message="limit reached",
-    ))
-
-    assert result.stop_reason == "max_iterations"
-    assert result.final_content == "partial answer\n\n[harness] limit reached"
-    assert result.pending_stream_content == "\n\n[harness] limit reached"
-    assert [
-        message["content"]
-        for message in result.messages
-        if message.get("role") == "assistant"
-    ] == ["partial answer", "[harness] limit reached"]
-
-
-@pytest.mark.asyncio
-async def test_runner_length_recovery_does_not_leak_across_tool_calls():
-    """A recovered prefix belongs only to its contiguous response chain."""
-    from nanobot.agent.runner import AgentRunner
-
-    provider = MagicMock(spec=LLMProvider)
-    provider.chat_stream_with_retry = AsyncMock(side_effect=[
-        LLMResponse(content="working", finish_reason="length"),
-        LLMResponse(
-            content=None,
-            tool_calls=[ToolCallRequest(id="call_1", name="read_file", arguments={"path": "x"})],
-            finish_reason="tool_calls",
-        ),
-        LLMResponse(content="final answer", finish_reason="stop"),
-    ])
-    tools = MagicMock()
-    tools.get_definitions.return_value = []
-    tools.execute = AsyncMock(return_value="file content")
-
-    runner = AgentRunner()
-    result = await runner.run(make_run_spec(provider,
-        initial_messages=[{"role": "user", "content": "inspect a file"}],
-        tools=tools,
-        model="test-model",
-        max_iterations=5,
-        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
-    ))
-
-    assert result.final_content == "final answer"
-    assert result.tools_used == ["read_file"]
 
 
 @pytest.mark.asyncio
@@ -1235,39 +1146,6 @@ async def test_runner_marks_a_reasoning_only_reply():
 
     assert result.stop_reason == "empty_final_response"
     assert result.stop_detail == "reasoning_only"
-
-
-@pytest.mark.asyncio
-async def test_runner_marks_exhausted_length_recovery_as_truncated():
-    """A fragment that is not blank is still not an answer.
-
-    Four consecutive `length` responses exhaust the recovery budget. The tail is
-    real text — a plan — so the blank check cannot see the failure, and without
-    this the turn would be persisted as completed.
-    """
-    from nanobot.agent.runner import AgentRunner
-
-    provider = MagicMock(spec=LLMProvider)
-    provider.chat_stream_with_retry = AsyncMock(
-        return_value=LLMResponse(content="Now write the reply. Let me write.", finish_reason="length")
-    )
-    tools = MagicMock()
-    tools.get_definitions.return_value = []
-
-    runner = AgentRunner()
-    result = await runner.run(make_run_spec(provider,
-        initial_messages=[{"role": "user", "content": "answer the thread"}],
-        tools=tools,
-        model="test-model",
-        max_iterations=10,
-        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
-    ))
-
-    assert result.stop_reason == "truncated"
-    assert result.stop_detail == "length"
-    assert "Let me write." in (result.final_content or "")
-    # One original response plus three recoveries, then the budget is spent.
-    assert provider.chat_stream_with_retry.await_count == 4
 
 
 @pytest.mark.asyncio

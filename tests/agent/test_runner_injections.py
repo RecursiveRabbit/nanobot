@@ -441,45 +441,6 @@ async def test_checkpoint2_injects_after_final_response_with_resuming_stream():
 
 
 @pytest.mark.asyncio
-async def test_injected_followup_starts_new_length_recovery_chain():
-    """A follow-up gets a fresh recovery budget and no content from the prior answer."""
-    from nanobot.agent.runner import AgentRunner
-    from nanobot.bus.events import InboundMessage
-
-    provider = MagicMock()
-    provider.chat_stream_with_retry = AsyncMock(side_effect=[
-        LLMResponse(content="first-1 ", finish_reason="length"),
-        LLMResponse(content="first-2 ", finish_reason="length"),
-        LLMResponse(content="first-3 ", finish_reason="length"),
-        LLMResponse(content="first-final", finish_reason="stop"),
-        LLMResponse(content="follow-up ", finish_reason="length"),
-        LLMResponse(content="answer", finish_reason="stop"),
-    ])
-    tools = MagicMock()
-    tools.get_definitions.return_value = []
-
-    injection_queue = asyncio.Queue()
-    inject_cb = _make_injection_callback(injection_queue)
-    await injection_queue.put(
-        InboundMessage(channel="cli", sender_id="u", chat_id="c", content="follow-up question")
-    )
-
-    runner = AgentRunner()
-    result = await runner.run(make_run_spec(provider,
-        initial_messages=[{"role": "user", "content": "give a long answer"}],
-        tools=tools,
-        model="test-model",
-        max_iterations=8,
-        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
-        injection_callback=inject_cb,
-    ))
-
-    assert result.had_injections is True
-    assert result.final_content == "follow-up answer"
-    assert provider.chat_stream_with_retry.await_count == 6
-
-
-@pytest.mark.asyncio
 async def test_checkpoint2_preserves_final_response_in_history_before_followup():
     """A follow-up injected after a final answer must still see that answer in history."""
     from nanobot.agent.runner import AgentRunner

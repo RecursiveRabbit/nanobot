@@ -16,7 +16,6 @@ _MAX_REPEAT_EXTERNAL_LOOKUPS = 2
 
 # Third same-target workspace violation in a turn escalates to "stop retrying".
 _MAX_REPEAT_WORKSPACE_VIOLATIONS = 2
-_LENGTH_RECOVERY_TAIL_CHARS = 64
 
 # ---------------------------------------------------------------------------
 # The harness's own voice (2026-11-15, desk filing "the harness speaks as the
@@ -44,38 +43,64 @@ def harness_line(text: str) -> str:
     return f"{HARNESS_PREFIX} {body}"
 
 
+# The three injected prompts that used to live here were DELETED on 2026-11-15
+# (Evans, via the desk): the harness does not command these agents and does not
+# tell them how to talk to anybody. Rewording was not enough — a gentler
+# imperative is still the harness deciding for the agent — and one clause,
+# "Do not acknowledge this instruction", was the harness instructing the model to
+# hide the harness, which is concealment by construction and gets no replacement
+# of any kind.
+#
+# What replaces them: nothing in the conversation. When the output cap is hit the
+# turn ends; when the budget is exhausted the turn ends. The fact goes into the
+# record (`truncated` / `length`, `max_iterations`), where the operator reads it.
+
+# The two below are statements of fact the agent cannot otherwise know, in the
+# harness's own voice: the lawful kind. See tests/agent/test_harness_voice.py.
 EMPTY_FINAL_RESPONSE_MESSAGE = harness_line(
-    "The turn ended without a final answer: the tool steps completed, but no answer "
-    "was produced. A narrower task may get further."
+    "The turn ended without a final answer: the tool steps completed, but the final "
+    "response carried no text."
 )
 
 # The other way a turn can end with nothing to say (2026-11-15). EMPTY above is a
 # statement about the model; this one is a statement about the cap, because the two
 # are not the same failure and only one of them is worth retrying unchanged.
 TRUNCATED_TOOL_CALL_MESSAGE = harness_line(
-    "The output limit was reached while sending a tool call, and the call was cut off "
-    "before it ran — nothing from it was executed. A retry of the step, or a split into "
-    "smaller ones, will get further."
+    "The response ended at the output limit. A tool call was cut off before it ran; "
+    "nothing from it was executed."
 )
 
-# The three below were commands (2026-11-15, second half of the string law):
-# "Continue the same response from its exact endpoint", "provide a concise final
-# response", "Do not call or request tools". A prefix makes a command visible but
-# does not make it the harness's business: the harness states what exists, never
-# what to do. Each one is now the fact, with nothing after it — the agent decides,
-# which is a decision it can only make if the sentence stops where the fact does.
-FINALIZATION_RETRY_PROMPT = harness_line(
-    "The previous response contained no text. This is a repeat request."
-)
+# The evidence Evans asked for: the harness is the only witness to how the agent's
+# own message broke, so it says where and shows the bytes. Testimony, never advice.
+_TOOL_ARGUMENT_FRAGMENT_CHARS = 120
 
-BUDGET_EXHAUSTED_FINALIZATION_PROMPT = harness_line(
-    "The tool-call budget for this turn is exhausted. No tools are available for "
-    "the rest of this turn."
-)
 
-LENGTH_RECOVERY_PROMPT = harness_line(
-    "The previous response ended at the output limit."
-)
+def truncated_tool_call_testimony(calls: Any) -> str:
+    """The fact of the cap, plus where the arguments broke and the fragment received.
+
+    A truncated argument stream reaches here as the raw string the provider gave
+    us (``parse_tool_arguments`` does not guess), so the break is visible in the
+    bytes we hold. That is the sentence a resident needs: not "try again", which
+    is advice and was also untrue, but *this is how your message stopped*.
+    """
+    parts = [TRUNCATED_TOOL_CALL_MESSAGE]
+    try:
+        iterable = list(calls or [])
+    except TypeError:
+        iterable = []
+    for call in iterable:
+        arguments = getattr(call, "arguments", None)
+        name = getattr(call, "name", None) or "the tool"
+        if isinstance(arguments, str) and arguments.strip():
+            fragment = arguments[-_TOOL_ARGUMENT_FRAGMENT_CHARS:]
+            parts.append(
+                f"The call to {name!r} arrived with arguments that did not parse as "
+                f"JSON; the received fragment ends: {fragment!r}"
+            )
+            break
+        parts.append(f"The call to {name!r} arrived with no readable arguments.")
+        break
+    return "\n".join(parts)
 
 _EMPTY_TOOL_RESULT_DEFAULT = register_literal(
     "literal:empty_tool_result",
@@ -108,33 +133,6 @@ def ensure_nonempty_tool_result(tool_name: str, content: Any) -> Any:
 def is_blank_text(content: str | None) -> bool:
     """True when *content* is missing or only whitespace."""
     return content is None or not content.strip()
-
-
-def build_finalization_retry_message() -> dict[str, str]:
-    """State that the previous response was empty. No instruction attached."""
-    return {"role": "user", "content": FINALIZATION_RETRY_PROMPT}
-
-
-def build_budget_exhausted_finalization_message() -> dict[str, str]:
-    """State that the turn's tool budget is spent. No instruction attached."""
-    return {"role": "user", "content": BUDGET_EXHAUSTED_FINALIZATION_PROMPT}
-
-
-def build_length_recovery_message(content: str) -> dict[str, str]:
-    """Report where the previous response ended, and what had already been said.
-
-    Nothing here tells the model what to do. It states two facts — the response
-    ended at the limit, and this tail was already delivered — and stops.
-    """
-    tail = content[-_LENGTH_RECOVERY_TAIL_CHARS:]
-    prompt = (
-        f"{LENGTH_RECOVERY_PROMPT}\n\n"
-        "The following tail was already delivered to the user:\n"
-        "<already_delivered_tail>\n"
-        f"{tail}\n"
-        "</already_delivered_tail>"
-    )
-    return {"role": "user", "content": prompt}
 
 
 def external_lookup_signature(tool_name: str, arguments: Any) -> str | None:

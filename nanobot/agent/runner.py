@@ -54,9 +54,7 @@ from nanobot.utils.prompt_templates import render_template
 from nanobot.utils.runtime import (
     EMPTY_FINAL_RESPONSE_MESSAGE,
     TRUNCATED_TOOL_CALL_MESSAGE,
-    build_budget_exhausted_finalization_message,
-    build_finalization_retry_message,
-    build_length_recovery_message,
+    truncated_tool_call_testimony,
     harness_line,
     is_blank_text,
 )
@@ -670,38 +668,45 @@ class AgentRunner:
                 clean = hook.finalize_content(context, response.content)
 
             if response.finish_reason == "length" and not response.has_tool_calls:
-                # A truncated response that carried a tool call never takes this
-                # ladder. LENGTH_RECOVERY_PROMPT asks the model to continue text it
-                # never began, so it re-emits the same call, three times, and the
-                # turn ends blank — lark's 76 hours of folds and dova's fold, both
-                # 2026-11-15. A call whose arguments were whole is executed by
-                # should_execute_tools and never reaches here; one whose arguments
-                # were cut off ends the turn in the branch below, naming the cap.
-                if len(length_recovery_parts) < _MAX_LENGTH_RECOVERIES:
-                    length_recovery_parts.append(
-                        _restore_outer_whitespace(clean or "", original_content)
-                    )
-                    logger.info(
-                        "Output truncated on turn {} for {} ({}/{}); continuing",
-                        iteration,
-                        spec.session_key or "default",
-                        len(length_recovery_parts),
-                        _MAX_LENGTH_RECOVERIES,
-                    )
-                    if hook.wants_streaming():
-                        context.stream_continues_current_message = True
-                        await hook.on_stream_end(context, resuming=True)
-                    messages.append(conversation_state.project_response_message(
-                        build_assistant_message(
-                            clean,
-                            reasoning_content=response.reasoning_content,
-                            thinking_blocks=response.thinking_blocks,
-                        ),
-                        response,
-                    ))
-                    messages.append(build_length_recovery_message(clean or ""))
-                    await hook.after_iteration(context)
+                # No continuation prompt. Evans 2026-11-15: the harness does not
+                # command these agents, does not tell them how to speak, and does
+                # not ask them to keep the harness quiet. The old ladder appended a
+                # prose-continuation instruction here and looped; what it bought was
+                # three rounds of a model told to continue text it never began, and
+                # a turn that ended blank.
+                #
+                # The turn ends where the cap ends it. What was produced is
+                # returned, the record says `truncated` / `length`, and the operator
+                # reads the fact in the record rather than in the resident's mouth.
+                truncated_text = clean or ""
+                stop_reason = "truncated"
+                stop_detail = "length"
+                has_text = not is_blank_text(truncated_text)
+                # Placement (Evans 2026-11-15): a fact about the turn goes in the
+                # record, never in the assistant's channel. If the cap left no
+                # text, the turn has nothing to say and says nothing; `error`
+                # carries the sentence for the operator.
+                final_content = truncated_text if has_text else ""
+                error = None if has_text else EMPTY_FINAL_RESPONSE_MESSAGE
+                logger.info(
+                    "Output truncated on turn {} for {}; the turn ends at the cap",
+                    iteration,
+                    spec.session_key or "default",
+                )
+                if final_content:
+                    self._append_final_message(messages, final_content)
+                context.final_content = final_content
+                context.error = error
+                context.stop_reason = stop_reason
+                await hook.after_iteration(context)
+                should_continue, injection_cycles = await self._try_drain_injections(
+                    spec, messages, None, injection_cycles,
+                    phase="after output limit",
+                )
+                if should_continue:
+                    had_injections = True
                     continue
+                break
 
             # Some streaming providers recover with a complete response but no
             # content deltas. When an earlier length segment is already visible,
@@ -787,13 +792,30 @@ class AgentRunner:
                 # cut it short. Naming the cap is also what tells the next reader of
                 # the record that repeating the same prompt is not the cure, which
                 # is the sentence the context audit needed and did not have.
-                final_content = (
-                    "".join(length_recovery_parts) + TRUNCATED_TOOL_CALL_MESSAGE
-                ).strip()
+                testimony = truncated_tool_call_testimony(response.tool_calls)
+                # Placement (Evans 2026-11-15): this is a fact about a tool call, so
+                # it goes in that call's result — the one channel structurally
+                # labelled with the tool's name, which cannot be read as a person
+                # speaking. The assistant's channel says nothing.
+                messages.append(build_assistant_message(
+                    "",
+                    tool_calls=[tc.to_openai_tool_call() for tc in response.tool_calls],
+                    reasoning_content=response.reasoning_content,
+                    thinking_blocks=response.thinking_blocks,
+                ))
+                for call in response.tool_calls:
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "name": call.name,
+                        "content": testimony,
+                    })
                 stop_reason = "truncated_tool_call"
                 stop_detail = response.finish_reason or "length"
-                error = final_content
-                self._append_final_message(messages, final_content)
+                error = testimony
+                final_content = ""
+                if final_content:
+                    self._append_final_message(messages, final_content)
                 context.final_content = final_content
                 context.error = error
                 context.stop_reason = stop_reason
@@ -808,7 +830,10 @@ class AgentRunner:
                     continue
                 break
             if is_blank_text(clean):
-                final_content = EMPTY_FINAL_RESPONSE_MESSAGE
+                # The turn produced nothing. That is the operator's fact, not the
+                # assistant's sentence (Evans 2026-11-15): content stays empty and
+                # the record carries the words.
+                final_content = ""
                 stop_reason = "empty_final_response"
                 # In hand here and nowhere else: a blank reply after truncation reads
                 # as a refusal in the transcript, and the finish reason is the only
@@ -826,8 +851,9 @@ class AgentRunner:
                 stop_detail = "reasoning_only" if attempt_reasoning else (
                     response.finish_reason or None
                 )
-                error = final_content
-                self._append_final_message(messages, final_content)
+                error = EMPTY_FINAL_RESPONSE_MESSAGE
+                if final_content:
+                    self._append_final_message(messages, final_content)
                 context.final_content = final_content
                 context.error = error
                 context.stop_reason = stop_reason
@@ -1257,9 +1283,9 @@ class AgentRunner:
 
     @staticmethod
     def _finalization_retry_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        retry_messages = list(messages)
-        retry_messages.append(build_finalization_retry_message())
-        return retry_messages
+        # Nothing is injected (Evans 2026-11-15). The previous attempt is simply
+        # repeated; the record already says why the harness is asking again.
+        return list(messages)
 
     async def _try_finalize_after_max_iterations(
         self,
@@ -1352,9 +1378,9 @@ class AgentRunner:
     def _budget_exhausted_finalization_messages(
         messages: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        retry_messages = list(messages)
-        retry_messages.append(build_budget_exhausted_finalization_message())
-        return retry_messages
+        # Nothing is injected (Evans 2026-11-15): the budget is spent, the turn
+        # ends, and `max_iterations` in the record is the fact.
+        return list(messages)
 
     @staticmethod
     def _max_iterations_fallback(spec: AgentRunSpec) -> str:

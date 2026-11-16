@@ -398,7 +398,10 @@ async def test_length_finish_with_blank_content_routes_to_length_recovery():
 
     # Not the empty-retry path, and not a plain apology: a sentence about the cap.
     assert result.stop_reason == "truncated_tool_call"
-    assert TRUNCATED_TOOL_CALL_MESSAGE in (result.final_content or "")
-    assert result.final_content != EMPTY_FINAL_RESPONSE_MESSAGE
+    tool_text = " ".join(
+        m.get("content") or "" for m in result.messages if m.get("role") == "tool"
+    )
+    assert TRUNCATED_TOOL_CALL_MESSAGE in tool_text
+    assert result.final_content == ""
     # And it did not spend three rounds asking prose to continue a tool call.
     assert provider.chat_stream_with_retry.await_count == 1
