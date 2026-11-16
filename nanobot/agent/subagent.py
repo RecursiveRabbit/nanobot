@@ -431,6 +431,7 @@ class SubagentManager:
                     max_iterations=self.max_iterations,
                     max_tool_result_chars=self.max_tool_result_chars,
                     hook=_SubagentHook(task_id, status),
+                    # Harness-authored text: `_max_iterations_fallback` labels it.
                     max_iterations_message="Task completed but no final response was generated.",
                     finalize_on_max_iterations=False,
                     error_message=None,

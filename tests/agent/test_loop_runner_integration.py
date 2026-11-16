@@ -256,8 +256,9 @@ async def test_loop_max_iterations_message_stays_stable(tmp_path):
     )
 
     assert result.final_content == (
-        "I reached the maximum number of tool call iterations (2) "
-        "without completing the task. You can try breaking the task into smaller steps."
+        "[harness] The harness stopped this turn at the maximum number of tool-call "
+        "iterations (2) before the task was complete. Breaking the task into smaller "
+        "steps will get further."
     )
 
 
@@ -537,5 +538,5 @@ async def test_subagent_max_iterations_announces_existing_fallback(tmp_path, mon
 
     mgr._announce_result.assert_awaited_once()
     args = mgr._announce_result.await_args.args
-    assert args[3] == "Task completed but no final response was generated."
+    assert args[3] == "[harness] Task completed but no final response was generated."
     assert args[5] == "ok"

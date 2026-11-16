@@ -1,1 +1,1 @@
-I reached the maximum number of tool call iterations ({{ max_iterations }}) without completing the task. You can try breaking the task into smaller steps.
+The harness stopped this turn at the maximum number of tool-call iterations ({{ max_iterations }}) before the task was complete. Breaking the task into smaller steps will get further.

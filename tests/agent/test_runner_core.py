@@ -534,7 +534,7 @@ async def test_runner_preserves_last_completed_provider_state_on_model_error():
     assert result.provider_state.payload == state.payload
     assert result.provider_state.pending_messages[0] == unsaved_input
     assert result.provider_state.pending_messages[1]["role"] == "assistant"
-    assert "model error" in result.provider_state.pending_messages[1]["content"]
+    assert "model call failed" in result.provider_state.pending_messages[1]["content"]
 
 
 @pytest.mark.asyncio
@@ -597,8 +597,9 @@ async def test_runner_returns_max_iterations_fallback():
 
     assert result.stop_reason == "max_iterations"
     assert result.final_content == (
-        "I reached the maximum number of tool call iterations (2) "
-        "without completing the task. You can try breaking the task into smaller steps."
+        "[harness] The harness stopped this turn at the maximum number of tool-call "
+        "iterations (2) before the task was complete. Breaking the task into smaller "
+        "steps will get further."
     )
     assert result.messages[-1]["role"] == "assistant"
     assert result.messages[-1]["content"] == result.final_content
@@ -922,13 +923,13 @@ async def test_runner_length_recovery_preserves_prefix_at_max_iterations():
     ))
 
     assert result.stop_reason == "max_iterations"
-    assert result.final_content == "partial answer\n\nlimit reached"
-    assert result.pending_stream_content == "\n\nlimit reached"
+    assert result.final_content == "partial answer\n\n[harness] limit reached"
+    assert result.pending_stream_content == "\n\n[harness] limit reached"
     assert [
         message["content"]
         for message in result.messages
         if message.get("role") == "assistant"
-    ] == ["partial answer", "limit reached"]
+    ] == ["partial answer", "[harness] limit reached"]
 
 
 @pytest.mark.asyncio

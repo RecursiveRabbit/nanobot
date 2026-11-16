@@ -28,6 +28,8 @@ from pathlib import Path
 
 import pytest
 
+from nanobot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
+
 NANOBOT_REPO = Path(__file__).resolve().parents[2]
 WORKSPACE = Path(
     os.environ.get("SWEEP_WORKSPACE", NANOBOT_REPO.parent / "workspace")
@@ -323,8 +325,7 @@ def test_provider_error_requeues(rig):
 
 
 def test_harness_nonanswer_does_not_change_delivery_bookkeeping(rig):
-    tail = [_assistant("I completed the tool steps but couldn't produce a "
-                       "final answer. Please try again or narrow the task.")]
+    tail = [_assistant(EMPTY_FINAL_RESPONSE_MESSAGE)]
     path = _write_session(rig["sess_dir"], KEY, tail=tail)
     _age(path)
     _arm(rig, path)

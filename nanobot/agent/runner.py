@@ -57,18 +57,24 @@ from nanobot.utils.runtime import (
     build_budget_exhausted_finalization_message,
     build_finalization_retry_message,
     build_length_recovery_message,
+    harness_line,
     is_blank_text,
 )
 
 CheckpointCallback = Callable[[dict[str, Any]], Awaitable[None]]
 InjectionCallback = Callable[..., Awaitable[Iterable[Any] | None]]
 
-_DEFAULT_ERROR_MESSAGE = "Sorry, I encountered an error calling the AI model."
-_ARREARAGE_ERROR_MESSAGE = (
+_DEFAULT_ERROR_MESSAGE = harness_line("The AI model call failed. Nothing was answered.")
+_ARREARAGE_ERROR_MESSAGE = harness_line(
     "The AI provider rejected the request because the API key is out of quota or the "
-    "account is in arrears. Please top up / check the billing status of your API key and try again."
+    "account is in arrears. The key's quota or billing status needs checking before the "
+    "next request can succeed."
 )
-_PERSISTED_MODEL_ERROR_PLACEHOLDER = "[Assistant reply unavailable due to model error.]"
+# Already visibly a placeholder rather than speech, but it goes through the same
+# door so there is one rule to know instead of two.
+_PERSISTED_MODEL_ERROR_PLACEHOLDER = harness_line(
+    "The assistant reply is unavailable because the model call failed."
+)
 _MAX_EMPTY_RETRIES = 2
 _MAX_LENGTH_RECOVERIES = 3
 
@@ -1353,14 +1359,14 @@ class AgentRunner:
     @staticmethod
     def _max_iterations_fallback(spec: AgentRunSpec) -> str:
         if spec.max_iterations_message:
-            return spec.max_iterations_message.format(
+            return harness_line(spec.max_iterations_message.format(
                 max_iterations=spec.max_iterations,
-            )
-        return render_template(
+            ))
+        return harness_line(render_template(
             "agent/max_iterations_message.md",
             strip=True,
             max_iterations=spec.max_iterations,
-        )
+        ))
 
     def _usage_or_estimate(
         self,

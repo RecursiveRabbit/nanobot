@@ -236,4 +236,4 @@ async def test_chat_only_provider_still_has_a_timeout(monkeypatch, finalize):
     assert provider.calls == (2 if finalize else 1)
     assert result.stop_reason == ("max_iterations" if finalize else "error")
     if finalize:
-        assert result.final_content == "Tool budget exhausted."
+        assert result.final_content == "[harness] Tool budget exhausted."

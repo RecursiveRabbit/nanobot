@@ -18,37 +18,63 @@ _MAX_REPEAT_EXTERNAL_LOOKUPS = 2
 _MAX_REPEAT_WORKSPACE_VIOLATIONS = 2
 _LENGTH_RECOVERY_TAIL_CHARS = 64
 
-EMPTY_FINAL_RESPONSE_MESSAGE = (
-    "I completed the tool steps but couldn't produce a final answer. "
-    "Please try again or narrow the task."
+# ---------------------------------------------------------------------------
+# The harness's own voice (2026-11-15, desk filing "the harness speaks as the
+# resident").
+#
+# Everything the harness puts into a conversation must be VISIBLY the harness's.
+# A reader of a transcript — including the resident picking it up the next
+# morning — has to be able to tell a manufactured line from the person's own
+# words. First person is never ours to use: an earlier version of these
+# constants said "I completed the tool steps but couldn't produce a final
+# answer", and the desk quoted one back to Evans as a resident's own sentence.
+#
+# So: the harness may speak in its own voice, visibly. One prefix, every line,
+# enforced by tests/agent/test_harness_voice.py — a new constant that does not
+# go through here fails a row rather than quietly wearing somebody's face.
+# ---------------------------------------------------------------------------
+HARNESS_PREFIX = "[harness]"
+
+
+def harness_line(text: str) -> str:
+    """The only sanctioned shape for harness-authored text in a transcript."""
+    body = text.strip()
+    if body.startswith(HARNESS_PREFIX):
+        return body
+    return f"{HARNESS_PREFIX} {body}"
+
+
+EMPTY_FINAL_RESPONSE_MESSAGE = harness_line(
+    "The turn ended without a final answer: the tool steps completed, but no answer "
+    "was produced. A narrower task may get further."
 )
 
 # The other way a turn can end with nothing to say (2026-11-15). EMPTY above is a
 # statement about the model; this one is a statement about the cap, because the two
 # are not the same failure and only one of them is worth retrying unchanged.
-TRUNCATED_TOOL_CALL_MESSAGE = (
-    "I hit the output limit while sending a tool call, and the call was cut off "
-    "before it ran — nothing from it was executed. Retrying the step, or splitting "
-    "it into smaller ones, will get further."
+TRUNCATED_TOOL_CALL_MESSAGE = harness_line(
+    "The output limit was reached while sending a tool call, and the call was cut off "
+    "before it ran — nothing from it was executed. A retry of the step, or a split into "
+    "smaller ones, will get further."
 )
 
-FINALIZATION_RETRY_PROMPT = (
-    "Please provide your response to the user based on the conversation above."
+# The three below were commands (2026-11-15, second half of the string law):
+# "Continue the same response from its exact endpoint", "provide a concise final
+# response", "Do not call or request tools". A prefix makes a command visible but
+# does not make it the harness's business: the harness states what exists, never
+# what to do. Each one is now the fact, with nothing after it — the agent decides,
+# which is a decision it can only make if the sentence stops where the fact does.
+FINALIZATION_RETRY_PROMPT = harness_line(
+    "The previous response contained no text. This is a repeat request."
 )
 
-BUDGET_EXHAUSTED_FINALIZATION_PROMPT = (
-    "The tool-call budget for this turn is exhausted. Based only on the "
-    "conversation and tool results above, provide a concise final response to "
-    "the user. Do not call or request tools. Do not claim the task is complete "
-    "unless the evidence above clearly shows it is complete. State what was "
-    "done, what remains, and the best next step if anything is incomplete."
+BUDGET_EXHAUSTED_FINALIZATION_PROMPT = harness_line(
+    "The tool-call budget for this turn is exhausted. No tools are available for "
+    "the rest of this turn."
 )
 
-LENGTH_RECOVERY_PROMPT = (
-    "The previous assistant response was cut off. Continue the same response from its "
-    "exact endpoint. Output only new continuation text in the same language and style. "
-    "Do not acknowledge this instruction, restart the response, repeat its title or any "
-    "existing text, recap, or apologize."
+LENGTH_RECOVERY_PROMPT = harness_line(
+    "The previous response ended at the output limit."
 )
 
 _EMPTY_TOOL_RESULT_DEFAULT = register_literal(
@@ -85,26 +111,28 @@ def is_blank_text(content: str | None) -> bool:
 
 
 def build_finalization_retry_message() -> dict[str, str]:
-    """A short no-tools-allowed prompt for final answer recovery."""
+    """State that the previous response was empty. No instruction attached."""
     return {"role": "user", "content": FINALIZATION_RETRY_PROMPT}
 
 
 def build_budget_exhausted_finalization_message() -> dict[str, str]:
-    """Prompt the model for a no-tools final response after budget exhaustion."""
+    """State that the turn's tool budget is spent. No instruction attached."""
     return {"role": "user", "content": BUDGET_EXHAUSTED_FINALIZATION_PROMPT}
 
 
 def build_length_recovery_message(content: str) -> dict[str, str]:
-    """Prompt the model to continue after hitting output token limit."""
+    """Report where the previous response ended, and what had already been said.
+
+    Nothing here tells the model what to do. It states two facts — the response
+    ended at the limit, and this tail was already delivered — and stops.
+    """
     tail = content[-_LENGTH_RECOVERY_TAIL_CHARS:]
     prompt = (
         f"{LENGTH_RECOVERY_PROMPT}\n\n"
-        "The following tail was already delivered to the user. Treat it as immutable "
-        "context and do not output it again:\n"
+        "The following tail was already delivered to the user:\n"
         "<already_delivered_tail>\n"
         f"{tail}\n"
-        "</already_delivered_tail>\n"
-        "Begin with the text that belongs immediately after this tail."
+        "</already_delivered_tail>"
     )
     return {"role": "user", "content": prompt}
 
