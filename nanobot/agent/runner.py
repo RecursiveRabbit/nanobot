@@ -1244,12 +1244,13 @@ class AgentRunner:
         assistant_text: str | None,
     ) -> list[dict[str, Any]]:
         retry_messages = list(messages)
-        note = (
-            "The previous model response attempted to call tools, but every tool call "
-            "was malformed: the tool_use blocks had missing or non-string tool names. "
-            "Do not answer with a promise to use tools. Either call the required tools again "
-            "using valid tool names from the provided tool list and JSON object inputs, or give "
-            "a final answer only if no tool is required."
+        # Testimony, not instruction (Evans 2026-11-15). This was the fifth member of
+        # the family: "Do not answer with a promise to use tools. Either call the
+        # required tools again..." — two imperatives and an evaluation, delivered in
+        # the user's channel. What the harness actually knows is what was malformed.
+        note = harness_line(
+            "The previous response attempted to call tools, but every tool call was "
+            "malformed: the tool_use blocks had missing or non-string tool names."
         )
         if assistant_text:
             note += (

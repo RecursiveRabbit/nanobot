@@ -334,26 +334,66 @@ def test_a_hedge_must_come_with_the_observation_behind_it():
 
 
 def test_the_four_prohibitions_are_all_covered_here():
-    """Not a behaviour row: a signpost. Each of the harness's four prohibitions has
-    a row in this file, and this list is the index so a later editor can see at a
-    glance which one they are about to break.
+    """Not a behaviour row: a signpost. Evans settled the law on 2026-11-15 —
+    "[harness] is sufficient" — so the marker is the rule and there is no channel
+    surgery. Each prohibition has a row, and this list is the index so a later
+    editor can see at a glance which one they are about to break.
 
-      1. never an imperative          -> test_no_transcript_constant_gives_the_agent_an_order
-      2. never the resident's voice   -> test_no_transcript_constant_speaks_in_the_first_person,
-                                         test_every_transcript_constant_is_labelled_as_the_harness
-      3. never conceal itself         -> test_no_harness_text_asks_to_be_hidden,
-                                         test_the_injected_prompts_are_deleted_not_reworded
-      4. never an unearned claim      -> test_a_hedge_must_come_with_the_observation_behind_it,
-                                         test_the_truncated_tool_call_line_carries_the_fragment
+      0. every harness line carries the marker  -> test_every_transcript_constant_is_labelled_as_the_harness
+      1. never an imperative                    -> test_no_transcript_constant_gives_the_agent_an_order,
+                                                   test_no_bare_user_role_injection_in_the_runner
+      2. never the resident's voice             -> test_no_transcript_constant_speaks_in_the_first_person
+      3. never the user's voice                 -> test_no_bare_user_role_injection_in_the_runner
+      4. never an unearned claim                -> test_a_hedge_must_come_with_the_observation_behind_it,
+                                                   test_the_truncated_tool_call_line_carries_the_fragment
+      (and, still standing from the deletion)   -> test_the_injected_prompts_are_deleted_not_reworded,
+                                                   test_no_harness_text_asks_to_be_hidden
     """
     names = set(globals())
     for required in (
-        "test_no_transcript_constant_gives_the_agent_an_order",
-        "test_no_transcript_constant_speaks_in_the_first_person",
         "test_every_transcript_constant_is_labelled_as_the_harness",
-        "test_no_harness_text_asks_to_be_hidden",
-        "test_the_injected_prompts_are_deleted_not_reworded",
+        "test_no_transcript_constant_gives_the_agent_an_order",
+        "test_no_bare_user_role_injection_in_the_runner",
+        "test_no_transcript_constant_speaks_in_the_first_person",
         "test_a_hedge_must_come_with_the_observation_behind_it",
         "test_the_truncated_tool_call_line_carries_the_fragment",
+        "test_the_injected_prompts_are_deleted_not_reworded",
+        "test_no_harness_text_asks_to_be_hidden",
     ):
         assert required in names, f"{required} is named in the index but does not exist"
+
+
+def test_no_bare_user_role_injection_in_the_runner():
+    """The user's channel is not the harness's to borrow.
+
+    After the three prompts were deleted there was still a fifth member of the
+    family hiding in a method: a malformed-tool-call retry note, built as a bare
+    string and appended as {"role": "user"}, carrying "Do not answer with a
+    promise..." and "Either call the required tools again...". This row fails any
+    new one: a user-role message whose content is a bare string literal, rather
+    than a harness_line() call or a constant that already carries the marker, is a
+    harness line wearing the user's channel.
+    """
+    tree = ast.parse((PACKAGE / "agent" / "runner.py").read_text())
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        keys = [k.value for k in node.keys if isinstance(k, ast.Constant)]
+        if "role" not in keys or "content" not in keys:
+            continue
+        pairs = {
+            k.value: v for k, v in zip(node.keys, node.values) if isinstance(k, ast.Constant)
+        }
+        role = pairs.get("role")
+        if not (isinstance(role, ast.Constant) and role.value == "user"):
+            continue
+        content = pairs["content"]
+        # harness_line(...) call, a name that already carries the marker, or a
+        # runtime value (a real inbound message) are all fine. A bare literal is not.
+        if isinstance(content, ast.Constant) and isinstance(content.value, str):
+            if not content.value.startswith(HARNESS_PREFIX):
+                offenders.append(f"line {node.lineno}: user-role bare literal {content.value[:60]!r}")
+    assert not offenders, (
+        "harness text may carry [harness], never the user's channel:\n  " + "\n  ".join(offenders)
+    )
