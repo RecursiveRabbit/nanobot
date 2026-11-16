@@ -21,11 +21,13 @@ _SESSION_MESSAGE_REPLY_HINT = register_literal(
 
 import asyncio
 import json
+import os
 import time
+from pathlib import Path
 from collections import OrderedDict, deque
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from uuid import uuid4
 
 from loguru import logger
@@ -39,6 +41,7 @@ from nanobot.agent.tools.schema import (
     tool_parameters_schema,
 )
 from nanobot.bus.events import InboundMessage
+from nanobot.config.paths import get_runtime_subdir
 from nanobot.bus.origin import (
     ATTESTATION_HARNESS,
     ATTESTATION_RESIDENT_HANDLE,
@@ -61,6 +64,69 @@ from nanobot.session.session_messages import (
 _RATE_LIMIT_WINDOW_SECONDS = 60.0
 MIN_REPLY_TIMEOUT_SECONDS = 5
 MAX_REPLY_TIMEOUT_SECONDS = 60
+
+
+# A receipt, not a better sentence (desk filing 2026-11-15).
+#
+# "Sent to @dova" was a claim about the call, not about arrival. A sender could not
+# see pending as pending, and a queued message that arrives hours later lands in a
+# context it was not written for — that already fired once: a fold prompt delivered
+# nine hours late at 14:10. So a send writes down what it actually knows (the id,
+# the target, the moment), and a status call answers from the TARGET'S OWN RECORD,
+# which is the only artifact the sender cannot forge.
+_RECEIPT_RETENTION_S = 86_400
+
+
+def _receipts_path() -> Path:
+    return get_runtime_subdir("session-messages") / "receipts.json"
+
+
+def _write_receipt(receipt: "SessionMessageReceipt", target_session_key: str, source_name: str) -> None:
+    """Best-effort: a send must never fail because its receipt could not be filed."""
+    try:
+        path = _receipts_path()
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        cutoff_ms = (time.time() - _RECEIPT_RETENTION_S) * 1000
+        data = {
+            k: v for k, v in data.items()
+            if isinstance(v, dict) and float(v.get("queued_at_ms") or 0) >= cutoff_ms
+        }
+        data[receipt.message_id] = {
+            "target": receipt.target_name,
+            "target_session_key": target_session_key,
+            "queued_at_ms": receipt.queued_at_ms,
+            "source": source_name,
+        }
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=1, sort_keys=True))
+        os.replace(tmp, path)
+    except Exception:
+        logger.warning("session message receipt not recorded for {}", receipt.message_id)
+
+
+def _read_receipt(message_id: str) -> dict[str, Any] | None:
+    try:
+        data = json.loads(_receipts_path().read_text())
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    entry = data.get(message_id)
+    return entry if isinstance(entry, dict) else None
+
+
+@dataclass(frozen=True)
+class SessionMessageReceipt:
+    """What a send can prove at the moment it returns, and nothing more."""
+
+    target_name: str
+    message_id: str
+    queued_at_ms: int
 
 
 class SessionMessageError(ValueError):
@@ -222,12 +288,18 @@ class SendSessionMessageTool(Tool):
             )
         except SessionMessageError as exc:
             return ToolResult.error(f"Error: {exc}")
+        # Truthful at the only moment this call can know anything: the message is
+        # queued. Arrival is a separate fact and has its own question.
         if expect_reply:
             return (
-                f"Sent to {target}. A timeout notice will arrive after "
-                f"{reply_timeout_seconds}s unless it replies."
+                f"Queued for {target.target_name} — message {target.message_id}. It is in that "
+                f"session's inbound queue; arrival has not been observed. A timeout notice arrives "
+                f"after {reply_timeout_seconds}s if no reply comes."
             )
-        return f"Sent to {target}."
+        return (
+            f"Queued for {target.target_name} — message {target.message_id}. It is in that "
+            f"session's inbound queue; arrival has not been observed."
+        )
 
     async def enqueue(
         self,
@@ -237,7 +309,7 @@ class SendSessionMessageTool(Tool):
         content: str,
         expect_reply: bool,
         reply_timeout_seconds: int | None = None,
-    ) -> str:
+    ) -> SessionMessageReceipt:
         timeout_seconds = self._validate_reply_timeout(expect_reply, reply_timeout_seconds)
         try:
             target_name = normalize_session_handle(target_handle)
@@ -319,7 +391,13 @@ class SendSessionMessageTool(Tool):
                     envelope,
                 )
 
-        return f"@{target.name}"
+        receipt = SessionMessageReceipt(
+            target_name=target.name,
+            message_id=cast(str, envelope["message_id"]),
+            queued_at_ms=cast(int, envelope["created_at_ms"]),
+        )
+        _write_receipt(receipt, target.session_key, source.name)
+        return receipt
 
     def _prune_expired_rate_limits(self, cutoff: float) -> None:
         """Drop sources ordered by their most recent successful send."""
@@ -409,3 +487,76 @@ class SendSessionMessageTool(Tool):
                     attestation=ATTESTATION_HARNESS,
                 ),
             ))
+
+
+@tool_parameters(
+    tool_parameters_schema(
+        message_id=StringSchema("The id returned when the message was queued."),
+        required=["message_id"],
+    )
+)
+class SessionMessageStatusTool(Tool):
+    """Report whether a message sent with send_session_message has arrived.
+
+    Answered from the TARGET's own record, which is the one artifact a sender
+    cannot forge. "Queued" and "delivered" are different facts and this tool keeps
+    them apart, with the age of the former.
+    """
+
+    def __init__(self, sessions: SessionManager) -> None:
+        self._sessions = sessions
+
+    @classmethod
+    def create(cls, ctx: ToolContext) -> Tool:
+        if ctx.sessions is None:
+            raise RuntimeError("session_message_status requires a session manager")
+        return cls(ctx.sessions)
+
+    @classmethod
+    def enabled(cls, ctx: ToolContext) -> bool:
+        return ctx.sessions is not None
+
+    @property
+    def name(self) -> str:
+        return "session_message_status"
+
+    @property
+    def description(self) -> str:
+        return "Report whether a message sent with send_session_message has arrived."
+
+    @property
+    def read_only(self) -> bool:
+        return True
+
+    async def execute(self, message_id: str, **kwargs: Any) -> str:
+        receipt = _read_receipt(message_id)
+        if receipt is None:
+            return (
+                f"No receipt for message {message_id} in this instance: either it was never "
+                f"queued here, or the receipt aged out after 24h."
+            )
+        target = receipt.get("target") or "?"
+        key = receipt.get("target_session_key")
+        queued_at_ms = receipt.get("queued_at_ms") or 0
+        if isinstance(key, str) and key:
+            try:
+                # A read-only snapshot: a status check must never create or revive a
+                # session as a side effect of asking about one message.
+                session = await asyncio.to_thread(self._sessions.read_session_snapshot, key)
+            except Exception:
+                logger.warning("session message status could not read {}", key)
+                session = None
+            if session is not None:
+                for message in session.messages:
+                    envelope = session_message_envelope(message.get("metadata"))
+                    if envelope is not None and envelope["message_id"] == message_id:
+                        written = message.get("timestamp") or "an unrecorded moment"
+                        return (
+                            f"Delivered: message {message_id} is in @{target}'s record, "
+                            f"written {written}."
+                        )
+        age_s = max(0, int(time.time() - float(queued_at_ms) / 1000.0))
+        return (
+            f"Pending: message {message_id} is not in @{target}'s record. Queued {age_s}s ago; "
+            f"arrival has not been observed. It may still be queued, or it may have been dropped."
+        )

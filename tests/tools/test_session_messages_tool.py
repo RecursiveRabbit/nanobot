@@ -8,6 +8,7 @@ import pytest
 
 from nanobot.agent.tools.context import RequestContext, request_context
 from nanobot.agent.tools.session_messages import (
+    SessionMessageStatusTool,
     ListSessionsTool,
     SendSessionMessageTool,
     SessionMessageError,
@@ -110,7 +111,8 @@ async def test_send_publishes_user_input_to_the_existing_target(
     inbound = await bus.consume_inbound()
     envelope = session_message_envelope(inbound.metadata)
 
-    assert sent_to == f"@{target.name}"
+    assert sent_to.target_name == target.name
+    assert sent_to.message_id
     assert inbound.channel == "system"
     assert inbound.chat_id == "telegram:target"
     assert inbound.session_key_override == "telegram:target"
@@ -383,6 +385,133 @@ async def test_reply_follows_a_recycled_handle(tmp_path: Path) -> None:
             expect_reply=False,
         )
 
-    assert result == f"Sent to @{source.name}."
+    assert result.startswith(f"Queued for {source.name} — message ")
+    assert "arrival has not been observed" in result
     reply = await bus.consume_inbound()
     assert reply.chat_id == replacement.session_key
+
+
+# ---------------------------------------------------------------------------
+# The receipt (desk filing 2026-11-15, defect 2).
+#
+# "Sent to @dova" claimed arrival and could not prove it. A message queued at 18:40
+# left no run record, nothing in the target's session and nothing in the trigger
+# store; it would arrive whenever it arrived, into a context it was not written
+# for. The same class had already fired — a fold prompt delivered nine hours late
+# at 14:10, which is why a mid-afternoon fold was reported as a reassuring green.
+#
+# A queued message is a landmine when the sender cannot see it. The fix is a
+# receipt, and the receipt is answered from the target's own record: the one
+# artifact the sender cannot forge.
+# ---------------------------------------------------------------------------
+
+
+def _rig(tmp_path: Path):
+    sessions = SessionManager(tmp_path)
+    _persist(sessions, "websocket:source", "telegram:target")
+    bus = MessageBus()
+    send = SendSessionMessageTool(sessions=sessions, bus=bus)
+    status = SessionMessageStatusTool(sessions)
+    return sessions, bus, send, status
+
+
+async def _send(send, target: SessionHandle) -> str:
+    with request_context(RequestContext(
+        channel="websocket",
+        chat_id="source",
+        session_key="websocket:source",
+    )):
+        return await send.execute(
+            to=f"@{target.name}",
+            content="hello",
+            expect_reply=False,
+        )
+
+
+def _message_id(result: str) -> str:
+    return result.split("message ")[1].split(".")[0].strip()
+
+
+@pytest.mark.asyncio
+async def test_a_send_reports_queued_and_never_claims_arrival(tmp_path: Path) -> None:
+    sessions, bus, send, _status = _rig(tmp_path)
+    target = _handle(sessions, "telegram:target")
+
+    result = await _send(send, target)
+
+    assert result.startswith(f"Queued for {target.name} — message ")
+    assert "Sent" not in result
+    assert "arrival has not been observed" in result
+    # and the message really is in the queue
+    assert (await bus.consume_inbound()) is not None
+
+
+@pytest.mark.asyncio
+async def test_status_says_pending_with_its_age_before_the_target_has_it(tmp_path: Path) -> None:
+    sessions, _bus, send, status = _rig(tmp_path)
+    target = _handle(sessions, "telegram:target")
+    message_id = _message_id(await _send(send, target))
+
+    answer = await status.execute(message_id=message_id)
+
+    assert answer.startswith("Pending:")
+    assert message_id in answer
+    assert f"@{target.name}" in answer
+    assert "arrival has not been observed" in answer
+    assert "Queued " in answer and "s ago" in answer
+
+
+@pytest.mark.asyncio
+async def test_status_says_delivered_from_the_targets_own_record(tmp_path: Path) -> None:
+    """Arrival is arrival: the id is in that session's messages, not in a promise."""
+    sessions, bus, send, status = _rig(tmp_path)
+    target = _handle(sessions, "telegram:target")
+    message_id = _message_id(await _send(send, target))
+
+    inbound = await bus.consume_inbound()
+    session = sessions.get_or_create("telegram:target")
+    session.add_message("user", inbound.content, metadata=inbound.metadata)
+    sessions.save(session)
+
+    answer = await status.execute(message_id=message_id)
+
+    assert answer.startswith("Delivered:")
+    assert message_id in answer
+    assert f"@{target.name}'s record" in answer
+
+
+@pytest.mark.asyncio
+async def test_status_for_an_unknown_id_says_so_rather_than_guessing(tmp_path: Path) -> None:
+    _sessions, _bus, _send_tool, status = _rig(tmp_path)
+    answer = await status.execute(message_id="no-such-message")
+    assert answer.startswith("No receipt for message no-such-message")
+    assert "aged out" in answer
+
+
+def test_the_receipt_is_a_file_not_a_memory(tmp_path: Path) -> None:
+    """A receipt that dies with the process is not a receipt: the sender may ask
+    from a different turn, hours later."""
+    import json as _json
+
+    from nanobot.agent.tools import session_messages as module
+
+    sessions = SessionManager(tmp_path)
+
+    def _receipts_at(_tmp: Path) -> Path:
+        return _tmp / "receipts.json"
+
+    receipts = _receipts_at(tmp_path)
+    with patch.object(module, "_receipts_path", return_value=receipts):
+        _persist(sessions, "websocket:source", "telegram:target")
+        tool = SendSessionMessageTool(sessions=sessions, bus=MessageBus())
+        target = _handle(sessions, "telegram:target")
+        receipt = asyncio.run(tool.enqueue(
+            source_session_key="websocket:source",
+            target_handle=f"@{target.name}",
+            content="hello",
+            expect_reply=False,
+        ))
+        data = _json.loads(receipts.read_text())
+        assert receipt.message_id in data
+        assert data[receipt.message_id]["target"] == target.name
+        assert data[receipt.message_id]["target_session_key"] == "telegram:target"
