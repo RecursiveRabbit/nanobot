@@ -70,10 +70,10 @@ export function loadCachedOriginator(): UIMessageOriginator {
   return { kind: "anonymous" };
 }
 
-/** Short display label for an originator; anonymous stays explicit. */
+/** Short display label for an originator; an unnamed speaker renders as "User". */
 export function originatorLabel(originator: UIMessageOriginator | null | undefined): string | null {
   if (!originator) return null;
-  if (originator.kind === "anonymous") return null; // caller renders localized "Anonymous"
+  if (originator.kind === "anonymous") return null; // caller renders the localized default ("User")
   const label = (originator.label || "").trim();
   if (label) return label;
   const handle = (originator.handle || "").trim();

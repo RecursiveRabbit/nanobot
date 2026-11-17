@@ -1381,19 +1381,19 @@
     },
     "identity": {
       "title": "Identity",
-      "anonymous": "Anonymous",
+      "anonymous": "User",
       "description": "Display name attached to new messages from this WebUI profile, in the served thread and in the agent-visible envelope. Attribution only — not a login, never a permission. Historical messages are never rewritten.",
       "label": "Display name",
       "placeholder": "e.g. Evans",
-      "hint": "Leave empty to stay explicitly anonymous. Clears and changes apply to new messages only.",
+      "hint": "Leave empty to keep this profile unnamed — its messages show as \u201cUser\u201d. Changes apply to new messages only.",
       "save": "Save identity",
       "clear": "Clear",
       "noticeSaved": "Identity saved. New messages from this profile will show this name.",
-      "noticeCleared": "Identity cleared. Messages from this profile are anonymous again.",
+      "noticeCleared": "Identity cleared. Messages from this profile show as \u201cUser\u201d again.",
       "unavailable": "Identity needs a persistent WebUI profile. Reconnect once and try again.",
       "currentState": "Current: {{state}}",
       "stateNamed": "messages from this profile show as “{{name}}”",
-      "stateAnonymous": "messages from this profile show as anonymous"
+      "stateAnonymous": "messages from this profile show as \u201cUser\u201d"
     }
   },
   "chat": {
