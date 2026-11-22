@@ -17,10 +17,18 @@ One beat (the existing 05:00 sweep), paired turns, sequential per agent:
      awaits the day. The runner is sequential: compact → Deal day →
      next agent, down the roster. The day is a single turn: unlimited
      tool calls, the Valley answers through tool results, and EOS ends it.
-  3. SLEEP — the turn's completion is the close. No second compression,
-     no marker flipping. The session folds at the next 05:00 sweep like
-     every other session, and the Valley day rides into memory by the
-     ordinary machinery.
+  3. THE RETURN (Evans 2026-11-22: "a third message in the fold") — when
+     the day's turn completes, the chain immediately delivers one more
+     turn to the same session, sender_id="deal-close": the Deal Day is
+     over, the work day begins — tidy up, read your notes, get ready.
+     The close is a WORK turn: it is not stripped by ingress, it is not
+     held whole by the sweep, and it is what lets the next 05:00 fold
+     treat a finished day as finished business instead of a day still
+     held (the post-day stall the twins measured 2026-11-22).
+  4. SLEEP — the close turn's completion is the end of the chain. No
+     second compression, no marker flipping. The session folds at the
+     next 05:00 sweep like every other session, and the Valley day
+     rides into memory by the ordinary machinery.
 
 The laws this module exists to keep:
 - NO MINTING: no new sessions, no new websocket keys, no ledger binding,
@@ -58,7 +66,9 @@ from nanobot.webui.metadata import (
 
 DEAL_SENDER = "deal-session"
 FOLD_SENDER = "daily-compaction"  # the sweep's sender; arms the chain
+CLOSE_SENDER = "deal-close"  # the third message: the work day begins
 WELCOME_FILE = "bin/deal-welcome.md"
+CLOSE_FILE = "bin/deal-close.md"
 COMPACT_COMMAND = "/compact"
 
 
@@ -199,3 +209,53 @@ async def _open_the_day(*, submit_turn: Any, workspace: Path,
     logger.info("Deal: {}'s day is open ({})", handle, work_key)
     response = await submit_turn(msg)
     logger.info("Deal: {}'s day closed ({})", handle, work_key)
+    await _close_the_day(
+        submit_turn=submit_turn, workspace=workspace,
+        handle=handle, work_key=work_key,
+        fold_delivery=fold_delivery, fold_chat_id=fold_chat_id,
+    )
+
+
+async def _close_the_day(*, submit_turn: Any, workspace: Path,
+                         handle: str, work_key: str,
+                         fold_delivery: Any, fold_chat_id: str) -> None:
+    """Stage 3 (Evans 2026-11-22): the third message. The Deal Day is
+    over; the work day begins — tidy up, read your notes, get ready.
+
+    This is a WORK turn, deliberately unlike the day it follows: no
+    _deal_turn flag (ingress must not strip it), a sender that is not
+    the fold's (it arms nothing) and not the day's (it is not held
+    whole by the sweep). Its existence is what lets the next 05:00
+    sweep fold a finished day instead of reading 'last turn is a deal
+    day' forever — the stall the twins lived 2026-11-21/22."""
+    close = _read_text(workspace, CLOSE_FILE)
+    if close is None:
+        logger.warning("Deal: no close text at {} — {}'s day ends unmarked",
+                       CLOSE_FILE, handle)
+        return
+    metadata: dict[str, Any] = {
+        LOCAL_TRIGGER_META: {
+            "trigger_id": f"deal-close-{handle}",
+            "trigger_name": f"deal-close-{handle}",
+            "delivery_id": f"deal-close-{fold_delivery.id}",
+            "created_at_ms": int(time.time() * 1000),
+            "persist_content": close,
+        },
+    }
+    metadata.pop(WEBUI_TURN_METADATA_KEY, None)
+    metadata[WEBUI_TURN_METADATA_KEY] = f"trigger:deal-close-{handle}:{uuid.uuid4().hex}"
+    metadata[WEBUI_MESSAGE_SOURCE_METADATA_KEY] = {
+        "kind": "local_trigger",
+        "label": f"deal-close-{handle}",
+    }
+    msg = InboundMessage(
+        channel="websocket",
+        sender_id=CLOSE_SENDER,
+        chat_id=fold_chat_id,
+        content=close,
+        metadata=metadata,
+        session_key_override=work_key,
+    )
+    logger.info("Deal: {}'s work day begins ({})", handle, work_key)
+    await submit_turn(msg)
+    logger.info("Deal: {} is ready ({})", handle, work_key)

@@ -40,6 +40,9 @@ class FakeSessionManager:
 def workspace(tmp_path):
     (tmp_path / "bin").mkdir()
     (tmp_path / "bin" / "deal-welcome.md").write_text("This is your day.")
+    (tmp_path / "bin" / "deal-close.md").write_text(
+        "The Deal Day is over, and the work day begins."
+    )
     return tmp_path
 
 
@@ -85,8 +88,8 @@ async def test_fold_with_goodnight_opens_the_day(workspace):
         trigger=work_trigger(), delivery=fold_delivery(),
         response_text="Folded. Goodnight.", submit_turn=submit,
     )
-    submit.assert_awaited_once()
-    msg = submit.await_args.args[0]
+    assert submit.await_count == 2  # the day, then the close (Evans 11-22)
+    msg = submit.await_args_list[0].args[0]
     assert msg.session_key_override == "websocket:abc"
     # Regression (2026-10-28/29): the Deal turn must reuse the fold
     # trigger's bare WebUI chat id. Using work_key made a display-only
@@ -96,6 +99,57 @@ async def test_fold_with_goodnight_opens_the_day(workspace):
     assert msg.sender_id == "deal-session"
     assert msg.content == "This is your day."
     assert msg.metadata["_deal_turn"] is True
+
+
+async def test_the_close_turn_ends_the_day_and_is_work(workspace):
+    """Evans 2026-11-22 ("a third message in the fold"): after the day
+    closes, the chain delivers one more turn — sender deal-close, no
+    _deal_turn flag. The close is what lets the next sweep fold a
+    finished day instead of reading 'last turn is a deal day' forever
+    (the stall the twins lived 11-21/22)."""
+    from nanobot.triggers.local_session_turns import (
+        LOCAL_TRIGGER_META,
+        local_trigger_delivery_id,
+    )
+
+    sessions = FakeSessionManager({"websocket:abc": "nime"})
+    submit = AsyncMock(return_value=SimpleNamespace(content="EOS"))
+    await deal.chain_after_delivery(
+        store=None, session_manager=sessions, workspace=workspace,
+        trigger=work_trigger(), delivery=fold_delivery(),
+        response_text="Goodnight.", submit_turn=submit,
+    )
+    assert submit.await_count == 2
+    msg = submit.await_args_list[1].args[0]
+    assert msg.sender_id == "deal-close"
+    assert msg.chat_id == "abc"
+    assert msg.session_key_override == "websocket:abc"
+    assert msg.content == "The Deal Day is over, and the work day begins."
+    assert "_deal_turn" not in msg.metadata
+    assert local_trigger_delivery_id(msg.metadata) == "deal-close-d1"
+    trigger = msg.metadata[LOCAL_TRIGGER_META]
+    assert trigger["persist_content"] == (
+        "The Deal Day is over, and the work day begins."
+    )
+    assert msg.metadata["webui_turn_id"].startswith("trigger:deal-close-nime:")
+    assert msg.metadata["_webui_message_source"] == {
+        "kind": "local_trigger",
+        "label": "deal-close-nime",
+    }
+
+
+async def test_no_close_text_means_the_day_ends_unmarked(workspace):
+    """A missing close file never costs the day: the welcome runs, the
+    close logs and skips."""
+    (workspace / "bin" / "deal-close.md").unlink()
+    sessions = FakeSessionManager({"websocket:abc": "nime"})
+    submit = AsyncMock(return_value=SimpleNamespace(content="EOS"))
+    await deal.chain_after_delivery(
+        store=None, session_manager=sessions, workspace=workspace,
+        trigger=work_trigger(), delivery=fold_delivery(),
+        response_text="Goodnight.", submit_turn=submit,
+    )
+    submit.assert_awaited_once()  # the day, and nothing after it
 
 
 async def test_handle_resolution_against_the_real_store(tmp_path):
@@ -147,8 +201,8 @@ async def test_deal_turn_satisfies_the_coordinator_contract(workspace):
         trigger=work_trigger(), delivery=fold_delivery(),
         response_text="Goodnight.", submit_turn=submit,
     )
-    submit.assert_awaited_once()
-    msg = submit.await_args.args[0]
+    assert submit.await_count == 2  # the day, then the close
+    msg = submit.await_args_list[0].args[0]
     assert local_trigger_delivery_id(msg.metadata) == "deal-d1"
     trigger = msg.metadata[LOCAL_TRIGGER_META]
     assert trigger["persist_content"] == "This is your day."
@@ -168,8 +222,8 @@ async def test_compact_completion_opens_the_day(workspace):
         trigger=work_trigger(), delivery=compact_delivery(),
         response_text="Compaction complete.", submit_turn=submit,
     )
-    submit.assert_awaited_once()
-    assert submit.await_args.args[0].session_key_override == "websocket:abc"
+    assert submit.await_count == 2
+    assert submit.await_args_list[0].args[0].session_key_override == "websocket:abc"
 
 
 async def test_unrostered_sessions_chain(workspace):
@@ -184,7 +238,7 @@ async def test_unrostered_sessions_chain(workspace):
         trigger=work_trigger(), delivery=fold_delivery(),
         response_text="Goodnight.", submit_turn=submit,
     )
-    submit.assert_awaited_once()
+    assert submit.await_count == 2
 
 
 async def test_stale_roster_file_is_ignored(workspace):
@@ -199,7 +253,7 @@ async def test_stale_roster_file_is_ignored(workspace):
         trigger=work_trigger(), delivery=fold_delivery(),
         response_text="Goodnight.", submit_turn=submit,
     )
-    submit.assert_awaited_once()
+    assert submit.await_count == 2
 
 
 async def test_handleless_session_chains_with_key_label(workspace):
@@ -213,8 +267,8 @@ async def test_handleless_session_chains_with_key_label(workspace):
         trigger=work_trigger(), delivery=fold_delivery(),
         response_text="Goodnight.", submit_turn=submit,
     )
-    submit.assert_awaited_once()
-    msg = submit.await_args.args[0]
+    assert submit.await_count == 2
+    msg = submit.await_args_list[0].args[0]
     assert msg.session_key_override == "websocket:abc"
     assert msg.metadata["_webui_message_source"] == {
         "kind": "local_trigger",
