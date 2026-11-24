@@ -159,8 +159,15 @@ async def run_bound_cron_job(
     # Delivery is not cognition: a dead shift files as error, never ok
     # (tuto №12; studi's №14 — the run store stamped "ok" over a 403
     # budget death).
+    # The second hole, same surface (studi pass 45, 2026-11-23): a turn cut
+    # at the output cap is not a provider error, so it passed this classifier
+    # untouched and read "ok" over its own response saying nothing was
+    # executed.  A cap death is a non-completion — truncated mid-text or
+    # truncated_tool_call mid-call — and the stamp must say so; the turn's
+    # partial content stays in `response` for forensics either way.
+    _NONCOMPLETION = ("error", "truncated", "truncated_tool_call")
     stop_reason = resp.metadata.get("_stop_reason") if resp is not None else None
-    turn_failed = stop_reason == "error"
+    turn_failed = stop_reason in _NONCOMPLETION
     cron.write_run_record(
         run_id,
         {
@@ -171,8 +178,13 @@ async def run_bound_cron_job(
         },
     )
     if turn_failed:
+        why = {
+            "error": "a provider error",
+            "truncated": "the output cap mid-text",
+            "truncated_tool_call": "the output cap mid-tool-call (the call never ran)",
+        }[stop_reason]
         raise CronJobModelError(
-            f"cron job {job.id} turn ended on a provider error: "
+            f"cron job {job.id} turn ended on {why}: "
             f"{response[:200] or 'no content'}"
         )
     return response

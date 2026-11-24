@@ -122,6 +122,33 @@ async def test_silent_turn_records_ok(tmp_path) -> None:
     assert record["stop_reason"] is None
 
 
+async def test_cap_death_records_error_and_raises(tmp_path) -> None:
+    # studi pass 45 (2026-11-23): the second hole — a row whose own response
+    # says "nothing was executed" must not read ok.  The cap-death variants
+    # (a text cut, and a tool call cut before it ran) are non-completions:
+    # status=error and CronJobModelError, same as a provider error.
+    for stop_reason, expected in (
+        ("truncated", "the output cap mid-text"),
+        ("truncated_tool_call", "the output cap mid-tool-call"),
+    ):
+        cron = CronService(tmp_path / f"jobs-{stop_reason}.json")
+        agent = _FakeAgent(
+            OutboundMessage(
+                channel="websocket",
+                chat_id="tuto",
+                content="I hit the output limit and the call was cut off before it ran.",
+                metadata={"_stop_reason": stop_reason},
+            )
+        )
+
+        with pytest.raises(CronJobModelError, match=expected):
+            await run_bound_cron_job(_job(), agent=agent, cron=cron)
+
+        record = _final_record(_read_records(cron.store_path))
+        assert record["status"] == "error"
+        assert record["stop_reason"] == stop_reason
+
+
 async def test_model_error_marks_job_state_error(tmp_path) -> None:
     # Through the real service path: on_job raising CronJobModelError stamps
     # the job's last_status error without a traceback-level log.
