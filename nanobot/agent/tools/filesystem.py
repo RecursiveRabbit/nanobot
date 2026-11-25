@@ -3,6 +3,7 @@
 # pyright: reportPrivateUsage=false, reportUnusedFunction=false
 
 import difflib
+import json
 import mimetypes
 import os
 from dataclasses import dataclass
@@ -599,6 +600,125 @@ class WriteFileTool(_FsTool):
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
             return ToolResult.error(f"Error writing file: {e}")
+
+
+# ---------------------------------------------------------------------------
+# write_section
+# ---------------------------------------------------------------------------
+
+
+def _detect_json_indent(raw: str) -> int:
+    """The indent width a JSON file already uses, so a section edit keeps it."""
+    for line in raw.split("\n")[1:]:
+        if not line.strip():
+            continue
+        width = len(line) - len(line.lstrip(" "))
+        return 4 if width >= 4 else 2
+    return 2
+
+
+@tool_parameters(
+    tool_parameters_schema(
+        path=StringSchema("The JSON object file to write one section of"),
+        section=StringSchema("The top-level key naming the section"),
+        content=StringSchema("The section's value, as JSON text"),
+        required=["path", "section", "content"],
+    )
+)
+class WriteSectionTool(_FsTool):
+    """Replace one top-level key of a JSON object file, idempotently.
+
+    The fold hazard this answers (desk batch 15; kevu's tally, confirmed on the
+    metal 2026-11-23 at 17 cap-deaths across five residents): a whole-file write
+    of a 40-50 KB baton is 13-16k tokens against an 8192-token output cap, so the
+    call is cut mid-arguments and never runs. Writing the same file as N sections
+    is the residents' natural act; what was missing was a retry-safe unit for it.
+    `write_file` replaces the whole file and `apply_patch`'s add appends, so
+    re-issuing a cut section either duplicates it or clobbers the rest — and the
+    reader is left comparing byte counts to guess what landed.
+
+    Setting one top-level key is idempotent by construction: the same section
+    twice is the same file. Nothing is written unless the file and the new value
+    are both valid JSON, so a cut call leaves the previous state exactly. The
+    result line names the section, the file's section count and its byte size, so
+    the record says what happened without arithmetic afterwards.
+    """
+    _scopes = {"core", "subagent", "memory"}
+
+    @property
+    def name(self) -> str:
+        return "write_section"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Write one section of a JSON object file, named by a top-level key, "
+            "without touching the other sections. Idempotent: writing the same "
+            "section again replaces it, so a retried call cannot duplicate it. Use "
+            "this instead of write_file when the whole file is too large to emit in "
+            "one response (a baton, a long record). The file is valid JSON after "
+            "every successful call, and nothing is written unless both the file and "
+            "the new value parse."
+        )
+
+    async def execute(
+        self,
+        path: str | None = None,
+        section: str | None = None,
+        content: str | None = None,
+        **kwargs: Any,
+    ) -> str:
+        try:
+            if not path:
+                raise ValueError("Unknown path")
+            if not section or not str(section).strip():
+                raise ValueError("Unknown section")
+            if content is None:
+                raise ValueError("Unknown content")
+            try:
+                value = json.loads(content)
+            except (TypeError, ValueError) as e:
+                return ToolResult.error(
+                    f"Error: the value for section {section!r} is not valid JSON ({e}). "
+                    "Nothing was written; the file is unchanged."
+                )
+
+            fp = self._resolve_write(path)
+            data: dict[str, Any] = {}
+            indent = 2
+            if fp.exists():
+                raw = fp.read_text(encoding="utf-8")
+                if raw.strip():
+                    try:
+                        loaded = json.loads(raw)
+                    except ValueError as e:
+                        return ToolResult.error(
+                            f"Error: {fp} is not valid JSON ({e}); refusing to "
+                            "section-write it. Nothing was written."
+                        )
+                    if not isinstance(loaded, dict):
+                        return ToolResult.error(
+                            f"Error: {fp} holds a JSON {type(loaded).__name__}, not an "
+                            "object; sections need top-level keys. Nothing was written."
+                        )
+                    data = loaded
+                    indent = _detect_json_indent(raw)
+
+            data[str(section)] = value
+            rendered = json.dumps(data, indent=indent, ensure_ascii=False) + "\n"
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            tmp = fp.with_name(f".{fp.name}.section-{os.getpid()}.tmp")
+            tmp.write_text(rendered, encoding="utf-8")
+            os.replace(tmp, fp)
+            self._file_states.record_write(fp)
+            return (
+                f"Successfully wrote section {section!r} ({len(content)} chars) to {fp} — "
+                f"file now {len(data)} sections, {len(rendered)} bytes"
+            )
+        except PermissionError as e:
+            return ToolResult.error(f"Error: {e}")
+        except Exception as e:
+            return ToolResult.error(f"Error writing section: {e}")
 
 
 # ---------------------------------------------------------------------------
